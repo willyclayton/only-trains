@@ -307,6 +307,51 @@ export async function searchPhoton(
   return out;
 }
 
+
+// ---------- address queries ----------
+
+const ABBREV: Record<string, string> = {
+  n: "north", s: "south", e: "east", w: "west", ne: "northeast", nw: "northwest", se: "southeast", sw: "southwest",
+  ave: "avenue", av: "avenue", blvd: "boulevard", rd: "road", dr: "drive", pl: "place", ln: "lane",
+  ct: "court", pkwy: "parkway", hwy: "highway", sq: "square", ter: "terrace", cres: "crescent",
+};
+
+/** "1600 w north ave chicago" → "1600 west north avenue chicago" (only for address-like input). */
+export function expandAddressQuery(q: string): string {
+  const tokens = q.trim().split(/\s+/);
+  return tokens
+    .map((t, i) => {
+      const bare = t.toLowerCase().replace(/[.,]/g, "");
+      const trail = t.endsWith(",") ? "," : "";
+      // "st" after the house number is usually "Saint" ("123 St Charles Ave"); elsewhere "Street".
+      if (bare === "st") return i > 1 ? `street${trail}` : t;
+      const full = ABBREV[bare];
+      return full ? `${full}${trail}` : t;
+    })
+    .join(" ");
+}
+
+function tokenSet(s: string | undefined): Set<string> {
+  return new Set(normalizeText(s ?? "").split(" ").filter(Boolean));
+}
+
+/** Overlap between the (expanded) query and an address: name words count most; unasked-for street words cost. */
+function addressScore(name: string, detail: string | undefined, expandedQuery: string): number {
+  const q = tokenSet(expandedQuery);
+  const n = tokenSet(name);
+  const d = tokenSet(detail);
+  if (!q.size) return 0;
+  let inName = 0;
+  let inDetail = 0;
+  for (const t of q) {
+    if (n.has(t) || [...n].some((x) => /^\d/.test(t) && x.startsWith(t))) inName++;
+    else if (d.has(t)) inDetail++;
+  }
+  let extra = 0;
+  for (const t of n) if (!/^\d/.test(t) && !q.has(t)) extra++;
+  return (inName / q.size) * 70 + (inDetail / q.size) * 15 - extra * 8;
+}
+
 // ---------- merge + rank ----------
 
 function textScore(name: string, q: string): number {
@@ -348,7 +393,11 @@ function isSamePlace(a: GeoPlace, b: GeoPlace): boolean {
   const d = haversine(a, b);
   const na = normalizeText(a.name);
   const nb = normalizeText(b.name);
-  if (a.kind === "station" && b.kind === "station") return d < 400 && nameContains(a.name, b.name);
+  if (a.kind === "station" && b.kind === "station") {
+    // Operators often publish the same interchange as separate stops a few hundred metres apart.
+    if (na === nb && (a.detail ?? "") === (b.detail ?? "")) return d < 900;
+    return d < 400 && nameContains(a.name, b.name);
+  }
   if (a.kind === "station" || b.kind === "station") return d < 250 && na === nb;
   if (na !== nb) return false;
   if (a.kind === "city" && b.kind === "city") return d < 30000 && (a.detail ?? "") === (b.detail ?? "");
@@ -371,7 +420,7 @@ export async function geocode(
 
   const [stationsR, photonR] = await Promise.allSettled([
     searchStations(query, { ...opts, lang, limit: 8 }),
-    searchPhoton(query, { ...opts, lang, limit: 10 }),
+    searchPhoton(looksLikeAddress ? expandAddressQuery(query) : query, { ...opts, lang, limit: 10 }),
   ]);
   const failed: string[] = [];
   if (stationsR.status === "rejected") {
@@ -401,9 +450,15 @@ export async function geocode(
 
   for (const o of others) {
     const { _rank, ...place } = o;
-    let score = textScore(o.name, query) + distanceScore(o, near) - _rank * 3;
+    const isAddressMatch = looksLikeAddress && (o.kind === "address" || o.kind === "poi");
+    let score = isAddressMatch
+      ? (o.kind === "address"
+          ? addressScore(o.name, o.detail, expandAddressQuery(query)) + 40
+          : addressScore(o.detail?.split(", ")[0] ?? o.name, o.detail, expandAddressQuery(query)) + 25) +
+        distanceScore(o, near) -
+        _rank
+      : textScore(o.name, query) + distanceScore(o, near) - _rank * 3;
     if (o.kind === "city") score += textScore(o.name, query) >= 75 ? 14 : 4;
-    if (o.kind === "address" && looksLikeAddress) score += 30;
     if (o.kind === "station") score += 6;
     candidates.push({ ...place, _score: score });
   }
