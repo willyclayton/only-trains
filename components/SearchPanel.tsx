@@ -244,7 +244,7 @@ function TimeOption({ options, onOptionsChange }: { options: PlanOptions; onOpti
                   type="datetime-local"
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  className="h-9 w-full rounded-lg border border-line bg-panel-2 px-2.5 text-[13.5px] text-ink tabular focus:border-ink focus:outline-none"
+                  className="h-9 w-full rounded-lg border border-line bg-panel-2 px-2.5 text-[16px] text-ink tabular focus:border-ink focus:outline-none md:text-[13.5px]"
                 />
               </label>
               <div className="flex items-center justify-between gap-2">

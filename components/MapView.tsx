@@ -176,7 +176,17 @@ function labelRoom(map: MLMap, p: Padding): Padding {
   const x = wide ? 48 : 20;
   const y = wide ? 28 : 16;
   // Phones: the attribution button and scale sit in the top-left corner.
-  return { top: p.top + (wide ? y : 40), right: p.right + x, bottom: p.bottom + y, left: p.left + x };
+  return { top: p.top + (wide ? y : 40), right: p.right + x, bottom: p.bottom + (wide ? y : 28), left: p.left + x };
+}
+
+/**
+ * Pixel offset that centers a point in the part of the map the panel leaves
+ * open. Used instead of `easeTo({ padding })`, which would persist the
+ * padding on the transform, and every later fitBounds would then add it on
+ * top of its own padding.
+ */
+function openCenterOffset(p: Padding): [number, number] {
+  return [(p.left - p.right) / 2, (p.top - p.bottom) / 2];
 }
 
 /** Is the point inside the part of the viewport not covered by the panel? */
@@ -228,10 +238,17 @@ export default function MapView(props: MapViewProps) {
   const toName = to?.name;
   const stopsFC = useMemo(() => buildStops(selected, { fromName, toName }), [selected, fromName, toName]);
   const badges = useMemo(() => buildBadges(selected), [selected]);
+  const fromLat = from?.lat;
+  const fromLon = from?.lon;
+  const toLat = to?.lat;
+  const toLon = to?.lon;
   const endsFC = useMemo(
-    () => buildEnds(from, to),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [from?.lat, from?.lon, to?.lat, to?.lon],
+    () =>
+      buildEnds(
+        fromLat != null && fromLon != null ? { lat: fromLat, lon: fromLon } : null,
+        toLat != null && toLon != null ? { lat: toLat, lon: toLon } : null,
+      ),
+    [fromLat, fromLon, toLat, toLon],
   );
   const hasRoute = !!selected;
   const hoverLeg = hoveredLegIndex ?? -1;
@@ -269,7 +286,7 @@ export default function MapView(props: MapViewProps) {
     if (!m || !b) return;
     const pad = safePadding(m, labelRoom(m, latest.current.padding));
     if (isPoint(b)) {
-      m.easeTo({ center: b[0], zoom: Math.max(m.getZoom(), Math.min(maxZoom, POINT_ZOOM)), padding: pad, duration: animate ? 700 : 0 });
+      m.easeTo({ center: b[0], zoom: Math.max(m.getZoom(), Math.min(maxZoom, POINT_ZOOM)), offset: openCenterOffset(pad), duration: animate ? 700 : 0 });
       return;
     }
     m.fitBounds(b, { padding: pad, maxZoom, maxDuration: 1600, animate });
@@ -287,7 +304,14 @@ export default function MapView(props: MapViewProps) {
     const single = !!(init.from || init.to) && isPoint(startBounds);
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
-    const pad = { ...init.padding };
+    const wide = w >= 768;
+    const p0 = init.padding;
+    const pad = {
+      top: p0.top + (wide ? 28 : 40),
+      right: p0.right + (wide ? 48 : 20),
+      bottom: p0.bottom + 28,
+      left: p0.left + (wide ? 48 : 20),
+    };
     if (pad.left + pad.right > w - 80) pad.left = pad.right = 20;
     if (pad.top + pad.bottom > h - 80) pad.top = pad.bottom = 20;
 
@@ -309,7 +333,6 @@ export default function MapView(props: MapViewProps) {
       cooperativeGestures: false,
     });
     mapRef.current = m;
-    if (process.env.NODE_ENV === "development") (window as unknown as { __otMap?: MLMap }).__otMap = m; // DEBUG-TEMP
     lastFitKey.current = init.from && init.to ? abKey(init.from, init.to) : init.from || init.to ? pKey((init.from ?? init.to)!) : "";
 
     // ---------------- popups ----------------
@@ -471,6 +494,8 @@ export default function MapView(props: MapViewProps) {
     const onTouchStart = (ev: TouchEvent) => {
       cancelLp();
       if (ev.touches.length !== 1) return;
+      // Holding a pin to drag it, or a popup / control, is not a long-press on the map.
+      if ((ev.target as HTMLElement | null)?.closest?.(".maplibregl-marker, .maplibregl-popup, .maplibregl-ctrl")) return;
       const t = ev.touches[0];
       const rect = canvasContainer.getBoundingClientRect();
       const x = t.clientX - rect.left;
@@ -864,7 +889,7 @@ export default function MapView(props: MapViewProps) {
       const p = (from ?? to)!;
       const pad = safePadding(m, latest.current.padding);
       if (m.getZoom() >= 11 && inOpenView(m, p, pad)) return; // already in sight
-      m.easeTo({ center: [p.lon, p.lat], zoom: Math.max(m.getZoom(), POINT_ZOOM), padding: pad, duration: 800 });
+      m.easeTo({ center: [p.lon, p.lat], zoom: Math.max(m.getZoom(), POINT_ZOOM), offset: openCenterOffset(pad), duration: 800 });
     }
   }, [map, selected, from, to, fitTo]);
 

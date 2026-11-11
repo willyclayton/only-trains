@@ -35,27 +35,44 @@
   box-shadow: var(--shadow);
 }
 
-.ot-map .maplibregl-ctrl-group button {
+/* Only the control buttons themselves, not buttons inside our panels. */
+.ot-map .maplibregl-ctrl-group > button,
+.ot-map .ot-layers__btn {
   width: 34px;
   height: 34px;
   background-color: transparent;
 }
 
-.ot-map .maplibregl-ctrl-group button + button {
+.ot-map .maplibregl-ctrl-group > button + button {
   border-top: 1px solid var(--line);
 }
 
-.ot-map .maplibregl-ctrl-group button:first-child {
+.ot-map .maplibregl-ctrl-group > button:first-child {
   border-radius: 9px 9px 0 0;
 }
-.ot-map .maplibregl-ctrl-group button:last-child {
+.ot-map .maplibregl-ctrl-group > button:last-child {
   border-radius: 0 0 9px 9px;
 }
-.ot-map .maplibregl-ctrl-group button:only-child {
+.ot-map .maplibregl-ctrl-group > button:only-child,
+.ot-map .ot-layers__btn {
   border-radius: 9px;
 }
 
-.ot-map .maplibregl-ctrl button:not(:disabled):hover {
+.ot-map .maplibregl-ctrl-group > button:not(:disabled):hover,
+.ot-map .ot-layers__btn:hover {
+  background-color: var(--panel-2);
+}
+
+/* Reset MapLibre's control-button rules for buttons inside the layers panel. */
+.ot-map .ot-layers__panel button {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font: inherit;
+}
+.ot-map .ot-layers__panel button:not(:disabled):hover {
   background-color: var(--panel-2);
 }
 
@@ -180,7 +197,7 @@
   color: var(--muted);
   font-size: 11.5px;
 }
-.ot-switch {
+.ot-map .ot-layers__panel .ot-switch {
   position: relative;
   width: 34px;
   height: 20px;
@@ -190,8 +207,12 @@
   transition: background-color 0.15s;
   cursor: pointer;
 }
-.ot-switch[aria-checked="true"] {
+.ot-map .ot-layers__panel .ot-switch[aria-checked="true"],
+.ot-map .ot-layers__panel .ot-switch[aria-checked="true"]:hover {
   background: var(--ink);
+}
+.ot-map .ot-layers__panel .ot-switch[aria-checked="false"]:hover {
+  background: var(--line-strong);
 }
 .ot-switch::after {
   content: "";
@@ -214,10 +235,10 @@
   flex-direction: column;
   gap: 2px;
 }
-.ot-layers__views[aria-disabled="true"] {
-  opacity: 0.45;
+.ot-layers__views[data-off] {
+  opacity: 0.5;
 }
-.ot-view {
+.ot-map .ot-layers__panel .ot-view {
   display: flex;
   align-items: flex-start;
   gap: 9px;
@@ -229,10 +250,7 @@
   color: var(--ink);
   background: transparent;
 }
-.ot-view:hover {
-  background: var(--panel-2);
-}
-.ot-view[aria-checked="true"] {
+.ot-map .ot-layers__panel .ot-view[aria-checked="true"] {
   background: var(--panel-2);
 }
 .ot-view__radio {

@@ -8,13 +8,14 @@
  *  5. HARD GUARANTEE: drop any journey with a leg that is not WALK or a selected RailMode
  *  6. dedupe, sort, wrap paging cursors, timezones, attribution, warnings
  */
-import type { Journey, LatLon, Leg, PlanOptions, PlanResponse, RailMode } from "./types";
+import type { Journey, LatLon, Leg, PlanOptions, PlanResponse, RailMode, StationHint } from "./types";
 import { ALL_RAIL_MODES, DEFAULT_MAX_WALK_MINUTES, DEFAULT_MODES, isRailMode } from "./modes";
 import { formatDuration, haversine } from "./format";
 import { PlanError } from "./routing/http";
 import type { ProviderQuery, ProviderResult } from "./routing/provider";
 import { planTransitous, TRANSITOUS_MAX_PREPOST_SECONDS } from "./providers/transitous";
 import { googleEnabled, planGoogle } from "./providers/google";
+import { nearbyRailStations, walkMinutesFor, type NearestStation } from "./routing/nearest";
 
 export { PlanError } from "./routing/http";
 
@@ -253,18 +254,25 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
   const { kept, dropped } = enforceRailOnly(result.journeys, options.modes);
   const journeys = sortJourneys(dedupe(kept), options.arriveBy);
 
+  // ---- no route: find out whether an endpoint is simply too far from rail ---
+  let stationHints: StationHint[] | undefined;
+  if (!journeys.length && !input.cursor && remaining() > 2500) {
+    stationHints = await explainNoRoute(input, attempt.walk, remaining);
+  }
+
   if (!journeys.length) {
     const walk = attempt.walk;
     if (result.rejected + dropped > 0)
       warnings.push(
         "The only connections found here use buses, ferries or train types you have switched off, so they are hidden.",
       );
-    if (!input.cursor)
+    if (input.cursor) warnings.push("No more train journeys in that direction.");
+    // With station hints the UI explains the gap precisely; skip the generic text.
+    else if (!stationHints)
       warnings.push(
         `No train journey found${options.time ? " around that time" : ""}, even allowing up to ${walk} min of walking at each end. ` +
           "There may be no rail service nearby, or this region's timetables are not in Transitous yet.",
       );
-    else warnings.push("No more train journeys in that direction.");
   }
 
   if (!input.cursor && result.directWalk && result.directWalk.duration > 0) {
@@ -284,6 +292,7 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
 
   return {
     journeys,
+    ...(stationHints ? { stationHints } : {}),
     providers: [attempt.provider],
     attribution: result.attribution,
     warnings: [...new Set(warnings)],
@@ -291,6 +300,77 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
     originTz,
     destinationTz,
   };
+}
+
+/**
+ * When no journey exists, check whether an endpoint is beyond walking reach of
+ * any station. If exactly one endpoint is stranded, plan to (or from) a few
+ * stations near it in parallel and suggest the nearest one trains really reach:
+ * the nearest station is often on a network that doesn't connect (e.g. Amtrak
+ * reaches Gainesville, GA, but no data links it to Atlanta's MARTA).
+ */
+async function explainNoRoute(
+  input: PlanInput,
+  walk: number,
+  remaining: () => number,
+): Promise<StationHint[] | undefined> {
+  const { from, to, options } = input;
+  const t = Math.min(6000, remaining() - 500);
+  const ends = [
+    ["from", from],
+    ["to", to],
+  ] as const;
+  const nearby = await Promise.all(ends.map(([, p]) => nearbyRailStations(p, options.modes, 4, t)));
+
+  const hints: (StationHint & { candidates?: NearestStation[] })[] = [];
+  nearby.forEach((list, i) => {
+    const which = ends[i][0];
+    if (list === undefined) return; // lookup failed: say nothing rather than guess
+    if (!list.length) return void hints.push({ which, station: null });
+    const n = list[0];
+    const walkMinutes = walkMinutesFor(n.distance);
+    if (walkMinutes > walk)
+      hints.push({ which, station: n.place, distance: n.distance, walkMinutes, candidates: list });
+  });
+  if (!hints.length) return undefined;
+
+  const stranded = hints.filter((h) => h.station);
+  if (stranded.length === 1 && hints.length === 1 && remaining() > 4000) {
+    const h = stranded[0];
+    const timeoutMs = Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500));
+    const tries = await Promise.all(
+      h.candidates!.map(async (c) => {
+        try {
+          const r = await planTransitous({
+            from: h.which === "to" ? from : c.place,
+            to: h.which === "to" ? c.place : to,
+            options: { ...options, maxWalkMinutes: walk },
+            language: input.language,
+            timeoutMs,
+          });
+          return enforceRailOnly(r.journeys, options.modes).kept;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const idx = tries.findIndex((k) => k && k.length);
+    if (idx >= 0) {
+      const c = h.candidates![idx];
+      const best = tries[idx]!.reduce((a, b) => (b.duration < a.duration ? b : a));
+      Object.assign(h, {
+        station: c.place,
+        distance: c.distance,
+        walkMinutes: walkMinutesFor(c.distance),
+        reachable: true,
+        duration: best.duration,
+        lines: [...new Set(best.legs.filter((l) => l.line).map((l) => l.line!.name))],
+      });
+    } else if (tries.every((k) => k !== null)) {
+      h.reachable = false; // every candidate answered, none reachable
+    }
+  }
+  return hints.map(({ candidates: _c, ...h }) => h);
 }
 
 function walkRaisedWarning(requested: number, used: number, longest?: number): string {

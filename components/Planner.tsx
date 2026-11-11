@@ -103,6 +103,7 @@ export default function Planner() {
 
   const isDesktop = useIsDesktop();
   const abortRef = useRef<AbortController | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Measure the mobile bottom sheet so the map never fits a route underneath it.
   const sheetRef = useRef<HTMLElement | null>(null);
@@ -162,6 +163,7 @@ export default function Planner() {
           };
         });
         if (!direction) {
+          scrollRef.current?.scrollTo({ top: 0 });
           setSelectedId(json.journeys[0]?.id ?? null);
           setView("list");
           setHoveredLegIndex(null);
@@ -275,6 +277,10 @@ export default function Planner() {
           onEarlier={result?.cursors?.earlier ? () => runPlan(result.cursors!.earlier, "earlier") : undefined}
           onLater={result?.cursors?.later ? () => runPlan(result.cursors!.later, "later") : undefined}
           ready={!!from && !!to}
+          stationHints={result?.stationHints}
+          fromName={from?.name}
+          toName={to?.name}
+          onUseStation={(which, place) => setPlace(which, place)}
         />
       </>
     );
@@ -305,7 +311,7 @@ export default function Planner() {
           style={{ width: PANEL_WIDTH }}
         >
           <Header />
-          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">{panelBody}</div>
+          <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 overflow-y-auto">{panelBody}</div>
         </aside>
       ) : (
         <aside
@@ -323,7 +329,7 @@ export default function Planner() {
             <span className="h-1 w-10 rounded-full bg-line-strong" />
           </button>
           <Header compact />
-          {sheetOpen && <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">{panelBody}</div>}
+          {sheetOpen && <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 overflow-y-auto">{panelBody}</div>}
         </aside>
       )}
     </main>

@@ -13,7 +13,7 @@ import {
   RouteOff,
   TrainFront,
 } from "lucide-react";
-import type { Journey, Leg } from "@/lib/types";
+import type { Journey, Leg, Place, StationHint } from "@/lib/types";
 import { delayMinutes, formatClock, formatDistance, formatDuration } from "@/lib/format";
 import LineChip from "./LineChip";
 import { TimelineBar } from "./ui/ProportionBar";
@@ -35,6 +35,12 @@ export type JourneyListProps = {
   onLater?: () => void;
   /** True when both endpoints are set (otherwise show an empty-state hint). */
   ready: boolean;
+  /** No-route explanation: endpoints too far from any station. */
+  stationHints?: StationHint[];
+  fromName?: string;
+  toName?: string;
+  /** Re-plan with an endpoint moved to the suggested station. */
+  onUseStation?: (which: "from" | "to", place: Place) => void;
 };
 
 const GEOCODE_ATTRIBUTION = "Search: Transitous & Photon by komoot · © OpenStreetMap contributors";
@@ -61,6 +67,10 @@ export default function JourneyList({
   onEarlier,
   onLater,
   ready,
+  stationHints,
+  fromName,
+  toName,
+  onUseStation,
 }: JourneyListProps) {
   const now = useNow();
   const [paging, setPaging] = useState<"earlier" | "later" | null>(null);
@@ -111,7 +121,9 @@ export default function JourneyList({
 
       {loading && !hasJourneys && <Skeletons />}
 
-      {!loading && !error && !hasJourneys && <NoResults />}
+      {!loading && !error && !hasJourneys && (
+        <NoResults hints={stationHints} fromName={fromName} toName={toName} onUseStation={onUseStation} />
+      )}
 
       {hasJourneys && (
         <>
@@ -371,7 +383,85 @@ function Skeletons() {
   );
 }
 
-function NoResults() {
+function NoResults({
+  hints,
+  fromName,
+  toName,
+  onUseStation,
+}: {
+  hints?: StationHint[];
+  fromName?: string;
+  toName?: string;
+  onUseStation?: (which: "from" | "to", place: Place) => void;
+}) {
+  if (hints?.length) {
+    return (
+      <div className="mx-0.5 rounded-xl border border-dashed border-line-strong px-4 py-4">
+        <p className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+          <RouteOff size={18} aria-hidden className="shrink-0 text-muted" />
+          No train-only route found
+        </p>
+        <ul className="mt-3 space-y-3">
+          {hints.map((h, _i, all) => {
+            // Moving one end to a station can't help if the other end has none.
+            const otherHopeless = all.some((x) => x.which !== h.which && !x.station);
+            const name = (h.which === "from" ? fromName : toName) || (h.which === "from" ? "Your start" : "Your destination");
+            const other = (h.which === "from" ? toName : fromName) || (h.which === "from" ? "your destination" : "your start");
+            const st = h.station;
+            const em = (t: string) => <span className="font-semibold text-ink">{t}</span>;
+            return (
+              <li key={h.which} className="text-[13px] leading-snug text-ink-2">
+                {!st ? (
+                  <p>
+                    {em(name)} has no train station within about 50 km.
+                  </p>
+                ) : h.reachable ? (
+                  <p>
+                    Trains don&rsquo;t run near {em(name)}. The closest station they connect to{" "}
+                    {h.which === "to" ? <>from {em(other)}</> : <>for {em(other)}</>} is {em(st.name)},{" "}
+                    {formatDistance(h.distance ?? 0)} away.
+                  </p>
+                ) : h.reachable === false ? (
+                  <p>
+                    {em(name)} is {formatDistance(h.distance ?? 0)} from the nearest train station, {em(st.name)}, and
+                    no train from {em(other)} reaches a station near it.
+                  </p>
+                ) : (
+                  <p>
+                    {em(name)} is {formatDistance(h.distance ?? 0)} from the nearest train station, {em(st.name)}
+                    {h.walkMinutes ? <> (about {formatDuration(h.walkMinutes * 60)} on foot)</> : null}.
+                  </p>
+                )}
+                {st && h.reachable && (h.duration || h.lines?.length) ? (
+                  <p className="mt-1 flex items-center gap-1.5 text-[12px] text-muted">
+                    <TrainFront size={13} aria-hidden className="shrink-0" />
+                    <span className="min-w-0 truncate">
+                      {h.duration ? formatDuration(h.duration) : null}
+                      {h.duration && h.lines?.length ? " · " : null}
+                      {h.lines?.join(" › ")}
+                    </span>
+                  </p>
+                ) : null}
+                {st && h.reachable !== false && !otherHopeless && onUseStation && (
+                  <button
+                    type="button"
+                    onClick={() => onUseStation(h.which, st)}
+                    className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-ink px-3 py-1.5 text-[12.5px] font-medium text-ink hover:bg-panel-2"
+                  >
+                    <TrainFront size={14} aria-hidden className="shrink-0" />
+                    <span className="truncate">
+                      {h.which === "from" ? "Start" : "End"} at {st.name} instead
+                    </span>
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <p className="mt-3 text-[12px] leading-snug text-muted">Only Trains never uses buses to close the gap.</p>
+      </div>
+    );
+  }
   return (
     <div className="mx-0.5 rounded-xl border border-dashed border-line-strong px-4 py-5 text-center">
       <RouteOff size={22} aria-hidden className="mx-auto text-muted" />

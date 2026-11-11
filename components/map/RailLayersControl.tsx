@@ -91,7 +91,9 @@ export default function RailLayersControl({
             />
           </div>
 
-          <div className="ot-layers__views" role="radiogroup" aria-label="Overlay style" aria-disabled={!prefs.on}>
+          {/* Picking a style while the overlay is off turns it back on, so the
+              group is only dimmed, never disabled. */}
+          <div className="ot-layers__views" role="radiogroup" aria-label="Overlay style" data-off={!prefs.on || undefined}>
             {RAIL_VIEWS.map((v) => (
               <button
                 key={v.id}

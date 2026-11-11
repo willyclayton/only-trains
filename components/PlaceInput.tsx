@@ -379,7 +379,7 @@ const PlaceInput = forwardRef<PlaceInputHandle, PlaceInputProps>(function PlaceI
           onKeyDown={onKeyDown}
           // The wrapper shows focus (ink border); the global :focus-visible ring would draw a square inside it.
           style={{ outline: "none" }}
-          className="h-full min-w-0 flex-1 bg-transparent pl-3 pr-1 text-[14px] text-ink placeholder:text-faint"
+          className="h-full min-w-0 flex-1 bg-transparent pl-3 pr-1 text-[16px] text-ink placeholder:text-faint md:text-[14px]"
         />
         {status === "loading" && editing && (
           <LoaderCircle size={15} aria-hidden className="mr-1 shrink-0 animate-spin text-faint" />

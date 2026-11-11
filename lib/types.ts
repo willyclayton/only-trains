@@ -128,8 +128,35 @@ export type PlanOptions = {
   maxWalkMinutes: number;
 };
 
+/**
+ * Returned when no journey was found: how far an endpoint is from the nearest
+ * station of an enabled train type, so the UI can explain the gap and offer
+ * to plan to that station instead.
+ */
+export type StationHint = {
+  which: "from" | "to";
+  /** Nearest station, or null when there is none within ~50 km. */
+  station: Place | null;
+  /** Straight-line distance to the station, meters. */
+  distance?: number;
+  /** Rough walking time to the station, minutes. */
+  walkMinutes?: number;
+  /**
+   * true: trains from the other endpoint verifiably reach this station (it may
+   * not be the nearest one: the nearest can sit on an unconnected network).
+   * false: checked, and none of the nearby stations is reachable.
+   * undefined: not checked.
+   */
+  reachable?: boolean;
+  /** For a reachable station: fastest trip time there, seconds, and the lines used. */
+  duration?: number;
+  lines?: string[];
+};
+
 export type PlanResponse = {
   journeys: Journey[];
+  /** Present only when `journeys` is empty and an endpoint is out of walking reach of any station. */
+  stationHints?: StationHint[];
   /** Which provider(s) produced the results. */
   providers: string[];
   /** Attribution strings the UI must display. */
