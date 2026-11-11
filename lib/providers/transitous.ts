@@ -12,7 +12,7 @@
  * a User-Agent with app name + version + contact on every request, and a
  * visible link to https://transitous.org/sources/ plus OSM attribution.
  */
-import type { Journey, Leg, LegMode, LineInfo, RailMode, StopTime } from "../types";
+import type { Journey, LatLon, Leg, LegMode, LineInfo, RailMode, StopTime } from "../types";
 import { normalizeColor, haversine } from "../format";
 import { journeyTotals } from "../journey";
 import { decodePolyline, pathLength } from "../polyline";
@@ -469,4 +469,78 @@ function clamp(x: number, lo: number, hi: number) {
 
 function round6(x: number) {
   return Math.round(x * 1e6) / 1e6;
+}
+
+// ---------------------------------------------------------------------------
+// Long walks (used to reach a station that is beyond the walking limit)
+// ---------------------------------------------------------------------------
+
+/**
+ * A walking leg between two points that departs at `departAt` (ISO), routed on
+ * OSM streets by Transitous when it is under its 6 h direct-walk cap, otherwise
+ * a straight-line estimate (80 m/min with a 1.3 detour factor). Never throws.
+ */
+export async function walkLeg(
+  from: LatLon & { name: string },
+  to: LatLon & { name: string },
+  departAt: string,
+  timeoutMs: number,
+): Promise<Leg> {
+  const start = new Date(departAt).getTime();
+  try {
+    const p = new URLSearchParams();
+    p.set("fromPlace", `${round6(from.lat)},${round6(from.lon)}`);
+    p.set("toPlace", `${round6(to.lat)},${round6(to.lon)}`);
+    p.set("time", new Date(start).toISOString());
+    p.set("transitModes", "SUBWAY");
+    p.set("maxTransfers", "0");
+    p.set("preTransitModes", "WALK");
+    p.set("postTransitModes", "WALK");
+    p.set("maxPreTransitTime", "60");
+    p.set("maxPostTransitTime", "60");
+    p.set("directModes", "WALK");
+    p.set("maxDirectTime", String(TRANSITOUS_MAX_DIRECT_SECONDS));
+    p.set("numItineraries", "1");
+    p.set("timeout", String(Math.max(3, Math.floor(timeoutMs / 1000) - 1)));
+    const url = `${TRANSITOUS_BASE}${PLAN_PATH}?${p}`;
+    const raw = await cached(`walk:${url}`, 10 * 60_000, () => fetchPlan(url, timeoutMs));
+    const d = (raw.direct ?? []).find((x) => x.legs?.length && x.legs.every((l) => l.mode === "WALK"));
+    if (d) {
+      const legs = d.legs.map((l, i) => normalizeLeg(l, i === 0, i === d.legs.length - 1).leg);
+      const geometry = legs.flatMap((l) => l.geometry);
+      const steps = legs.flatMap((l) => l.steps ?? []);
+      const distance = Math.round(legs.reduce((s, l) => s + (l.distance ?? 0), 0));
+      const dur = d.duration;
+      return {
+        mode: "WALK",
+        from: { name: from.name, lat: from.lat, lon: from.lon, departure: new Date(start).toISOString() },
+        to: { name: to.name, lat: to.lat, lon: to.lon, arrival: new Date(start + dur * 1000).toISOString() },
+        startTime: new Date(start).toISOString(),
+        endTime: new Date(start + dur * 1000).toISOString(),
+        duration: dur,
+        distance,
+        geometry,
+        steps,
+      };
+    }
+  } catch {
+    // fall through to the estimate
+  }
+  const straight = haversine(from, to);
+  const distance = Math.round(straight * 1.3);
+  const dur = Math.round(distance / (80 / 60));
+  return {
+    mode: "WALK",
+    from: { name: from.name, lat: from.lat, lon: from.lon, departure: new Date(start).toISOString() },
+    to: { name: to.name, lat: to.lat, lon: to.lon, arrival: new Date(start + dur * 1000).toISOString() },
+    startTime: new Date(start).toISOString(),
+    endTime: new Date(start + dur * 1000).toISOString(),
+    duration: dur,
+    distance,
+    geometry: [
+      [from.lon, from.lat],
+      [to.lon, to.lat],
+    ],
+    steps: [{ instruction: `Walk about ${Math.round(distance / 1000)} km to ${to.name} (no street route available; straight-line estimate)`, distance }],
+  };
 }

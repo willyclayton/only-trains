@@ -332,7 +332,7 @@ function LegSequence({ legs }: { legs: Leg[] }) {
           {l.mode === "WALK" ? (
             <span className="inline-flex items-center gap-0.5 text-[12px] font-medium text-muted tabular" title={`Walk ${formatDuration(l.duration)}`}>
               <Footprints size={13} aria-hidden />
-              {roundMinutes(l.duration)}
+              {l.duration >= 3600 ? formatDuration(l.duration).replace(" min", "") : roundMinutes(l.duration)}
             </span>
           ) : (
             <LineChip line={l.line} mode={l.mode} size="sm" icon compact />
