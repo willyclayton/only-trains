@@ -368,24 +368,42 @@ async function explainNoRoute(
   if (stranded.length === 1 && hints.length === 1 && remaining() > 4000) {
     const h = stranded[0];
     const timeoutMs = Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500));
-    const tries = await Promise.all(
-      h.candidates!.map(async (c) => {
-        try {
-          const r = await planTransitous({
+    // One at a time, nearest first: Transitous rate-limits bursts (seen from
+    // Vercel's shared egress IPs), and we can stop at the first reachable one.
+    const tries: (Journey[] | null | undefined)[] = h.candidates!.map(() => undefined);
+    const check = async (c: NearestStation) =>
+      enforceRailOnly(
+        (
+          await planTransitous({
             from: h.which === "to" ? from : c.place,
             to: h.which === "to" ? c.place : to,
             options: { ...options, maxWalkMinutes: walk },
             language: input.language,
-            timeoutMs,
-          });
-          return enforceRailOnly(r.journeys, options.modes).kept;
-        } catch (e) {
-          note(`verify ${c.place.name} failed: ${e instanceof Error ? e.message : String(e)}`);
-          return null;
+            timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
+          })
+        ).journeys,
+        options.modes,
+      ).kept;
+    for (let i = 0; i < h.candidates!.length && remaining() > 3500; i++) {
+      const c = h.candidates![i];
+      try {
+        tries[i] = await check(c);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        note(`verify ${c.place.name} failed: ${msg}`);
+        tries[i] = null;
+        if (/rate-limit/i.test(msg) && remaining() > 5000) {
+          await new Promise((r) => setTimeout(r, 1200));
+          try {
+            tries[i] = await check(c);
+          } catch (e2) {
+            note(`verify ${c.place.name} retry failed: ${e2 instanceof Error ? e2.message : String(e2)}`);
+          }
         }
-      }),
-    );
-    note(`verify: ${tries.map((k, i) => `${h.candidates![i].place.name}=${k === null ? "error" : k.length}`).join(", ")}`);
+      }
+      if (tries[i]?.length) break;
+    }
+    note(`verify: ${tries.map((k, i) => `${h.candidates![i].place.name}=${k === undefined ? "skipped" : k === null ? "error" : k.length}`).join(", ")}`);
     const idx = tries.findIndex((k) => k && k.length);
     if (idx >= 0) {
       const c = h.candidates![idx];
@@ -398,7 +416,7 @@ async function explainNoRoute(
         duration: best.duration,
         lines: [...new Set(best.legs.filter((l) => l.line).map((l) => l.line!.name))],
       });
-    } else if (tries.every((k) => k !== null)) {
+    } else if (tries.every((k) => Array.isArray(k))) {
       h.reachable = false; // every candidate answered, none reachable
     }
   }
