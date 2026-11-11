@@ -27,7 +27,11 @@ export type PlanInput = {
   cursor?: string;
   /** Language for station/line names, e.g. "en". */
   language?: string;
+  /** Include timing/error diagnostics in the response. */
+  debug?: boolean;
 };
+
+type Nearby = (NearestStation[] | undefined)[];
 
 /** Walking limits tried, in minutes, when nothing is found within the requested one. */
 const ESCALATION_STEPS = [30, 60];
@@ -193,6 +197,12 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
   });
 
   const warnings: string[] = [];
+  const t0 = Date.now();
+  const dbg: string[] = [];
+  const note = (m: string) => {
+    if (input.debug) dbg.push(`${Date.now() - t0}ms ${m}`);
+  };
+  let nearbyP: Promise<Nearby> | null = null;
   const requestedWalk = options.maxWalkMinutes;
   let attempt: Attempt | null = null;
   let firstError: unknown = null;
@@ -214,11 +224,27 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
     for (let i = 0; i < walks.length; i++) {
       const w = walks[i];
       if (i > 0 && remaining() < 5000) break;
+      if (i > 0 && nearbyP) {
+        // More walking can't help when an endpoint is farther than the largest
+        // walk we would try from any station: skip the extra upstream calls.
+        const nb = await nearbyP;
+        const maxTry = walks[walks.length - 1];
+        if (nb.some((l) => l !== undefined && (!l.length || walkMinutesFor(l[0].distance) > maxTry))) {
+          note(`skip escalation: endpoint beyond ${maxTry} min walk of any station`);
+          break;
+        }
+      }
       try {
         const result = await planTransitous(query({ ...options, maxWalkMinutes: w }));
         attempt = { provider: "transitous", walk: w, result };
+        note(`plan walk=${w}: ${result.journeys.length} journeys`);
         if (result.journeys.length) break;
+        // Nothing yet: start looking for nearby stations in parallel with any escalation.
+        nearbyP ??= Promise.all(
+          [from, to].map((p) => nearbyRailStations(p, options.modes, 4, Math.min(6000, remaining() - 500))),
+        );
       } catch (e) {
+        note(`plan walk=${w} failed: ${e instanceof Error ? e.message : String(e)}`);
         if (i === 0) firstError = e;
         // A bad date won't improve with more walking, and a struggling provider
         // should not be hammered with escalations: stop at the first error.
@@ -257,7 +283,7 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
   // ---- no route: find out whether an endpoint is simply too far from rail ---
   let stationHints: StationHint[] | undefined;
   if (!journeys.length && !input.cursor && remaining() > 2500) {
-    stationHints = await explainNoRoute(input, attempt.walk, remaining);
+    stationHints = await explainNoRoute(input, attempt.walk, remaining, note, nearbyP);
   }
 
   if (!journeys.length) {
@@ -299,6 +325,7 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
     cursors,
     originTz,
     destinationTz,
+    ...(input.debug ? { debug: dbg } : {}),
   };
 }
 
@@ -313,6 +340,8 @@ async function explainNoRoute(
   input: PlanInput,
   walk: number,
   remaining: () => number,
+  note: (m: string) => void,
+  nearbyP: Promise<Nearby> | null,
 ): Promise<StationHint[] | undefined> {
   const { from, to, options } = input;
   const t = Math.min(6000, remaining() - 500);
@@ -320,7 +349,8 @@ async function explainNoRoute(
     ["from", from],
     ["to", to],
   ] as const;
-  const nearby = await Promise.all(ends.map(([, p]) => nearbyRailStations(p, options.modes, 4, t)));
+  const nearby = await (nearbyP ?? Promise.all(ends.map(([, p]) => nearbyRailStations(p, options.modes, 4, t))));
+  note(`nearby: ${nearby.map((l) => (l === undefined ? "lookup failed" : l.map((c) => `${c.place.name} ${Math.round(c.distance / 1000)}km`).join(", ") || "none")).join(" | ")}`);
 
   const hints: (StationHint & { candidates?: NearestStation[] })[] = [];
   nearby.forEach((list, i) => {
@@ -349,11 +379,13 @@ async function explainNoRoute(
             timeoutMs,
           });
           return enforceRailOnly(r.journeys, options.modes).kept;
-        } catch {
+        } catch (e) {
+          note(`verify ${c.place.name} failed: ${e instanceof Error ? e.message : String(e)}`);
           return null;
         }
       }),
     );
+    note(`verify: ${tries.map((k, i) => `${h.candidates![i].place.name}=${k === null ? "error" : k.length}`).join(", ")}`);
     const idx = tries.findIndex((k) => k && k.length);
     if (idx >= 0) {
       const c = h.candidates![idx];

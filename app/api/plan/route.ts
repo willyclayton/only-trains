@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
   try {
     const input = parsePlanParams(sp);
     if (!input.language) input.language = languageFrom(req);
+    input.debug = sp.get("debug") === "1";
     const body = await plan(input);
     const cacheable = !!(input.options.time || input.cursor);
     return Response.json(body, {

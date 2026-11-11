@@ -168,6 +168,8 @@ export type PlanResponse = {
   /** Timezone at the origin, for displaying times, if known. */
   originTz?: string;
   destinationTz?: string;
+  /** Diagnostics, only when the request passes debug=1. */
+  debug?: string[];
 };
 
 export type ApiError = { error: string; detail?: string };
