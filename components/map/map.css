@@ -365,8 +365,25 @@
   box-shadow: var(--shadow);
   font-family: var(--ot-font);
 }
-.ot-popup .maplibregl-popup-tip {
-  display: none;
+/* The tip shows exactly which point a popup refers to. */
+.ot-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.ot-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.ot-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--panel);
+}
+.ot-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.ot-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.ot-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--panel);
+}
+.ot-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--panel);
+}
+.ot-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--panel);
+}
+.ot-popup {
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.08));
 }
 .ot-popup--hover {
   pointer-events: none;

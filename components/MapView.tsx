@@ -116,6 +116,12 @@ function useMedia(query: string): boolean {
   return match;
 }
 
+/** US, Liberia and Myanmar customary units; everyone else reads metric. */
+function usesImperial(): boolean {
+  const lang = navigator.language || "";
+  return /-(US|LR|MM)$/i.test(lang);
+}
+
 function droppedPin(ll: LngLat, name = "Dropped pin", prefix = "pin"): Place {
   const w = ll.wrap();
   return {
@@ -349,7 +355,7 @@ export default function MapView(props: MapViewProps) {
       pinnedStop?.remove();
       pickPopup?.remove();
       const w = ll.wrap();
-      const popup = new Popup({ closeButton: false, closeOnClick: true, className: "ot-popup", offset: 6, maxWidth: "240px" });
+      const popup = new Popup({ closeButton: false, closeOnClick: true, className: "ot-popup", offset: 2, maxWidth: "240px" });
       popup
         .setLngLat(w)
         .setDOMContent(
@@ -580,12 +586,26 @@ export default function MapView(props: MapViewProps) {
       add(imperial, "bottom-right");
       add(metric, "bottom-right");
     } else {
+      // Phones: the map strip above the sheet is precious. One scale bar in
+      // the reader's units, and attribution behind its "i" button.
       add(attrib, "top-left");
-      add(metric, "top-left");
-      add(imperial, "top-left");
+      add(usesImperial() ? imperial : metric, "top-left");
     }
 
+    // MapLibre opens compact attribution until the first drag; on phones that
+    // covers the start of the route, so fold it once its text has arrived.
+    const attribEl = map.getContainer().querySelector<HTMLElement>(".maplibregl-ctrl-attrib");
+    const fold = () => {
+      if (!isDesktop && attribEl?.classList.contains("maplibregl-compact-show")) {
+        attribEl.classList.remove("maplibregl-compact-show");
+        map.off("sourcedata", fold);
+      }
+    };
+    map.on("sourcedata", fold);
+    fold();
+
     return () => {
+      map.off("sourcedata", fold);
       for (const { c } of controls) {
         try {
           map.removeControl(c);
@@ -772,13 +792,13 @@ export default function MapView(props: MapViewProps) {
     for (const b of badgeEntries.current) b.marker.remove();
     const sel = latest.current.selected;
     badgeEntries.current = badges.map((badge) => {
-      const el = badgeElement(badge);
+      const { root, button: el } = badgeElement(badge);
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
         const leg = latest.current.selected?.legs[badge.legIndex];
         if (leg) fitTo(legBounds(leg), 16);
       });
-      const marker = new Marker({ element: el, anchor: "center", className: "ot-badge-marker", subpixelPositioning: true })
+      const marker = new Marker({ element: root, anchor: "center", className: "ot-badge-marker", subpixelPositioning: true })
         .setLngLat(badge.coord)
         .addTo(map);
       const leg = sel?.legs[badge.legIndex];
@@ -790,9 +810,24 @@ export default function MapView(props: MapViewProps) {
 
   useEffect(() => {
     if (!map) return;
-    map.on("moveend", layoutBadges);
+    // Labels are only queryable once placed, a few frames after their data
+    // arrives, so re-run shortly after any camera or route-data change.
+    let timer = 0;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(layoutBadges, 120);
+    };
+    const onSourceData = (e: { sourceId?: string }) => {
+      if (e.sourceId === SRC.stops || e.sourceId === SRC.legs) schedule();
+    };
+    map.on("moveend", schedule);
+    map.on("idle", schedule);
+    map.on("sourcedata", onSourceData);
     return () => {
-      map.off("moveend", layoutBadges);
+      window.clearTimeout(timer);
+      map.off("moveend", schedule);
+      map.off("idle", schedule);
+      map.off("sourcedata", onSourceData);
     };
   }, [map, layoutBadges]);
 

@@ -22,7 +22,7 @@ import { stableHash } from "../routing/provider";
 import { classifyMotisLeg, cleanHeadsign, lineLabel, motisTransitModes, tripLabel } from "../routing/rail";
 import { buildWalkSteps, type RawStep } from "../routing/walk";
 
-export const TRANSITOUS_BASE = "https://api.transitous.org";
+export const TRANSITOUS_BASE = (process.env.TRANSITOUS_URL || "https://api.transitous.org").replace(/\/+$/, "");
 const PLAN_PATH = "/api/v6/plan";
 
 /**

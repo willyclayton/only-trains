@@ -376,7 +376,7 @@ function ModesOption({ options, onOptionsChange }: { options: PlanOptions; onOpt
                     if (last) return;
                     setDraft((d) => (on ? d.filter((x) => x !== m.id) : [...d, m.id]));
                   }}
-                  className={`flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-panel-2 ${
+                  className={`flex w-full items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-panel-2 ${
                     last ? "cursor-not-allowed" : ""
                   }`}
                 >
@@ -399,7 +399,7 @@ function ModesOption({ options, onOptionsChange }: { options: PlanOptions; onOpt
               );
             })}
           </div>
-          <div className="flex items-center justify-between gap-2 px-2.5 pb-1.5 pt-2">
+          <div className="sticky bottom-[-6px] -mx-1.5 -mb-1.5 flex items-center justify-between gap-2 border-t border-line bg-panel px-4 pb-3 pt-2.5">
             <p className="text-[11.5px] text-muted">{draft.length === 1 ? "At least one stays on." : " "}</p>
             <button
               type="button"

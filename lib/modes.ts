@@ -64,7 +64,7 @@ export function modeLabel(m: LegMode): string {
 export const MODE_FALLBACK_COLOR: Record<LegMode, string> = {
   WALK: "#6b7280",
   SUBWAY: "#2563eb",
-  COMMUTER: "#7c3aed",
+  COMMUTER: "#475569", // slate: purple read as the CTA Purple Line
   INTERCITY: "#dc2626",
   LIGHT_RAIL: "#059669",
   OTHER_RAIL: "#d97706",

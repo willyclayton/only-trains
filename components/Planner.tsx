@@ -76,6 +76,12 @@ function useIsDesktop() {
 
 const PANEL_WIDTH = 408;
 
+/** Always visible, even before a search: Transitous requires a visible link to its sources. */
+const BASE_ATTRIBUTION = [
+  "Routing by Transitous, timetable sources: https://transitous.org/sources/",
+  "© OpenStreetMap contributors https://www.openstreetmap.org/copyright",
+];
+
 export default function Planner() {
   const sp = useSearchParams();
   const initial = useMemo(() => readUrlState(new URLSearchParams(sp.toString())), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -251,7 +257,7 @@ export default function Planner() {
           loading={loading}
           error={error}
           warnings={result?.warnings ?? []}
-          attribution={result?.attribution ?? []}
+          attribution={result?.attribution?.length ? result.attribution : BASE_ATTRIBUTION}
           originTz={result?.originTz}
           onEarlier={result?.cursors?.earlier ? () => runPlan(result.cursors!.earlier, "earlier") : undefined}
           onLater={result?.cursors?.later ? () => runPlan(result.cursors!.later, "later") : undefined}

@@ -16,12 +16,22 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
 // A / B endpoint markers
 // ---------------------------------------------------------------------------
 
+/**
+ * MapLibre writes inline `transform` / `opacity` on a marker's root element,
+ * so every marker is an untouched wrapper around the element we style.
+ */
+function wrap(child: HTMLElement): HTMLElement {
+  const root = el("div");
+  root.appendChild(child);
+  return root;
+}
+
 export function endpointElement(which: "from" | "to"): HTMLElement {
   const pin = el("div", `ot-pin ${which === "from" ? "ot-pin--a" : "ot-pin--b"}`, which === "from" ? "A" : "B");
   pin.setAttribute("role", "img");
   pin.setAttribute("aria-label", which === "from" ? "Start point (drag to move)" : "End point (drag to move)");
   pin.title = which === "from" ? "Start · drag to move" : "End · drag to move";
-  return pin;
+  return wrap(pin);
 }
 
 // ---------------------------------------------------------------------------
@@ -48,7 +58,8 @@ function trainGlyph(): SVGSVGElement {
   return svg;
 }
 
-export function badgeElement(b: Badge): HTMLButtonElement {
+/** Returns the marker root and the badge button inside it. */
+export function badgeElement(b: Badge): { root: HTMLElement; button: HTMLButtonElement } {
   const btn = el("button", "ot-badge");
   btn.type = "button";
   btn.style.setProperty("--c", b.color);
@@ -58,7 +69,7 @@ export function badgeElement(b: Badge): HTMLButtonElement {
   btn.dataset.leg = String(b.legIndex);
   btn.appendChild(trainGlyph());
   btn.appendChild(el("span", "ot-badge__label", b.label));
-  return btn;
+  return { root: wrap(btn), button: btn };
 }
 
 // ---------------------------------------------------------------------------

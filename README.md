@@ -35,6 +35,7 @@ Routing smoke test across 18 cities: `npx tsx scripts/test-plan.ts` (or `npx tsx
 2. Optional environment variables (see `.env.example`):
    - `ONLY_TRAINS_CONTACT`: an email or URL added to the User-Agent sent to Transitous and Photon. Their policies ask for a way to contact the app's operator.
    - `GOOGLE_MAPS_API_KEY`: enables the Google Routes fallback (billed by Google).
+   - `PHOTON_URL`: your own [Photon](https://github.com/komoot/photon) instance for search. The public one is fair-use only and sometimes returns 503 under load.
 3. Deploy. No database or other services are needed.
 
 ## Data sources and usage terms

@@ -24,8 +24,9 @@ export const BASEMAP_ATTRIBUTION =
   '<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a> ' +
   '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>';
 
+/** Transitous requires a visible link to its data-sources page. */
 export const ROUTING_ATTRIBUTION =
-  'Routes <a href="https://transitous.org" target="_blank" rel="noopener">Transitous</a>';
+  'Routes <a href="https://transitous.org/sources/" target="_blank" rel="noopener">Transitous</a>';
 
 // ---------------------------------------------------------------------------
 // Railway overlay (OpenRailwayMap raster tiles)
