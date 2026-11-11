@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { ApiError, Journey, PlanOptions, PlanResponse, Place, RailMode } from "@/lib/types";
 import { DEFAULT_MAX_WALK_MINUTES, DEFAULT_MODES, isRailMode } from "@/lib/modes";
+import { haversine } from "@/lib/format";
 import SearchPanel from "./SearchPanel";
 import JourneyList from "./JourneyList";
 import JourneyDetail from "./JourneyDetail";
@@ -299,6 +300,7 @@ export default function Planner() {
           fromName={from?.name}
           toName={to?.name}
           onUseStation={(which, place) => setPlace(which, place)}
+          apart={from && to ? haversine(from, to) : undefined}
         />
       </>
     );

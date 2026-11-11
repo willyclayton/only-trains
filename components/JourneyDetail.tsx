@@ -271,7 +271,7 @@ export default function JourneyDetail({ journey: j, from, to, onBack, onHoverLeg
             <StackedBar rail={b.railDuration} walk={b.walkDuration} wait={b.waitDuration} />
           </div>
           <dl className="mt-3 grid grid-cols-3 gap-2">
-            <Stat kind="rail" label="On trains" value={formatDuration(b.railDuration)} sub={b.railDistance > 0 ? formatDistance(b.railDistance) : undefined} />
+            <Stat kind="rail" label="On trains" value={b.railDuration > 0 ? formatDuration(b.railDuration) : "None"} sub={b.railDistance > 0 ? formatDistance(b.railDistance) : undefined} />
             <Stat kind="walk" label="Walking" value={formatDuration(b.walkDuration)} sub={b.walkDistance > 0 ? formatDistance(b.walkDistance) : undefined} />
             <Stat
               kind="wait"

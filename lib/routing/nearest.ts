@@ -27,8 +27,8 @@ export type NearestStation = {
   distance: number;
 };
 
-/** Half-height of each search box in degrees of latitude (~7 km, ~22 km, ~55 km). */
-const BOX_HALF_DEG = [0.06, 0.2, 0.5];
+/** Half-height of each search box in degrees of latitude (~7, 22, 55, 130 and 280 km). */
+const BOX_HALF_DEG = [0.06, 0.2, 0.5, 1.2, 2.5];
 
 /** Rough walking time for a straight-line distance: 80 m/min with a 1.3 detour factor. */
 export function walkMinutesFor(straightMeters: number): number {
@@ -114,8 +114,8 @@ export async function nearbyRailStations(
       // Urban networks often don't connect to intercity trains in the data
       // (MARTA vs Amtrak in Atlanta): make sure a mainline station is a
       // candidate, looking in the widest box if this one has none.
-      if (!isLast && picked.every((x) => x.urban)) {
-        const main = (await stationsIn(largest)).find((x) => !x.urban);
+      if (half < 0.5 && picked.every((x) => x.urban)) {
+        const main = (await stationsIn(0.5)).find((x) => !x.urban);
         if (main) picked.push(main);
       }
       // Keep the mainline candidate even when it is the farthest of the set.

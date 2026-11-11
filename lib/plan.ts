@@ -10,10 +10,10 @@
  */
 import type { Journey, LatLon, Leg, PlanOptions, PlanResponse, Place, RailMode, StationHint } from "./types";
 import { ALL_RAIL_MODES, DEFAULT_MAX_WALK_MINUTES, DEFAULT_MODES, isRailMode } from "./modes";
-import { formatDuration, haversine } from "./format";
+import { formatDistance, formatDuration, haversine } from "./format";
 import { PlanError } from "./routing/http";
 import type { ProviderQuery, ProviderResult } from "./routing/provider";
-import { planTransitous, TRANSITOUS_MAX_PREPOST_SECONDS, walkLeg } from "./providers/transitous";
+import { planTransitous, TRANSITOUS_ATTRIBUTION, TRANSITOUS_MAX_PREPOST_SECONDS, walkLeg } from "./providers/transitous";
 import { journeyTotals } from "./journey";
 import { googleEnabled, planGoogle } from "./providers/google";
 import { nearbyRailStations, walkMinutesFor, type NearestStation } from "./routing/nearest";
@@ -270,8 +270,22 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
     }
 
     if (!attempt) {
-      if (firstError instanceof PlanError) throw firstError;
-      throw new PlanError(502, "Routing service unavailable", firstError instanceof Error ? firstError.message : undefined);
+      if (firstError instanceof PlanError && firstError.status < 500) throw firstError;
+      // Trains can't be checked right now, but there is always a way: walk.
+      const walking = remaining() > 2000 ? await walkingJourney(input, remaining).catch(() => null) : null;
+      if (!walking) {
+        if (firstError instanceof PlanError) throw firstError;
+        throw new PlanError(502, "Routing service unavailable", firstError instanceof Error ? firstError.message : undefined);
+      }
+      return {
+        journeys: [walking],
+        providers: ["transitous"],
+        attribution: [...TRANSITOUS_ATTRIBUTION],
+        warnings: [
+          `Train timetables couldn't be checked right now (${firstError instanceof Error ? firstError.message : "routing unavailable"}), so this shows walking the whole way. Try again in a minute for train options.`,
+        ],
+        ...(input.debug ? { debug: dbg } : {}),
+      };
     }
     if (attempt.provider === "transitous" && attempt.walk > requestedWalk && attempt.result.journeys.length)
       warnings.push(walkRaisedWarning(requestedWalk, attempt.walk, maxWalkLegMinutes(attempt.result.journeys)));
@@ -285,17 +299,33 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
   // If one end is just too far to walk within the limit, walk anyway: plan to
   // the nearest station trains reach and add the long walk to the journey.
   let stationHints: StationHint[] | undefined;
+  const hadTimetableResults = journeys.length > 0;
   if (!journeys.length && !input.cursor && remaining() > 2500) {
     const r = await explainNoRoute(input, attempt.walk, remaining, note, nearbyP);
-    if (r.stitched?.length) {
-      journeys = sortJourneys(r.stitched, options.arriveBy);
-      const h = r.hints!.find((x) => x.reachable)!;
-      const w = journeys[0].legs[h.which === "to" ? journeys[0].legs.length - 1 : 0];
-      warnings.push(
-        `No station is within walking reach of your ${h.which === "to" ? "destination" : "start"}, so these trips ` +
-          `${h.which === "to" ? "end" : "start"} with a ${formatDuration(w.duration)} walk (${Math.round((w.distance ?? 0) / 100) / 10} km) ` +
-          `${h.which === "to" ? "from" : "to"} ${h.station!.name.replace(/\.$/, "")}.`,
-      );
+    const why = (r.hints ?? [])
+      .map((h) => {
+        const end = h.which === "to" ? "your destination" : "your start";
+        if (!h.station) return `There are no train timetables within about 280 km of ${end}.`;
+        const km = Math.round((h.distance ?? 0) / 1000);
+        return `The nearest station ${h.reachable ? "with a train connection" : ""} to ${end} is ${h.station.name.replace(/\.$/, "")}, ${km} km away.`.replace("  ", " ");
+      })
+      .join(" ");
+    let walking: Journey | null = null;
+    if (remaining() > 2500) walking = await walkingJourney(input, remaining).catch(() => null);
+    let trains = r.stitched?.length ? sortJourneys(r.stitched, options.arriveBy) : [];
+    // Trains that are far slower than just walking are noise, not options.
+    if (walking) trains = trains.filter((j) => j.duration <= walking!.duration * 1.5);
+    if (trains.length) {
+      const longest = Math.max(...trains[0].legs.filter((l) => l.mode === "WALK").map((l) => l.duration));
+      warnings.push(`No station is within walking reach, so these trips include a long walk (up to ${formatDuration(longest)}). ${why}`);
+      journeys = trains;
+      if (walking && walking.duration < trains[0].duration) {
+        journeys = [walking, ...trains];
+        warnings.push(`Walking the whole way (${formatDistance(walking.walkDistance)}) is faster than any train here.`);
+      }
+    } else if (walking) {
+      journeys = [walking];
+      warnings.push(`No train helps on this trip, so the route is to walk the whole way: ${formatDistance(walking.walkDistance)}, about ${formatDuration(walking.duration)}. ${why}`);
     } else stationHints = r.hints;
   }
 
@@ -323,7 +353,8 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
 
   const providerCode = attempt.provider === "google" ? "g" : "t";
   const wrap = (c?: string) => (c ? encodeCursor({ v: 1, p: providerCode, c, w: attempt!.walk }) : undefined);
-  const cursors = journeys.length || input.cursor ? { earlier: wrap(result.cursors.earlier), later: wrap(result.cursors.later) } : undefined;
+  // Long-walk and walk-only trips are built here, not paged by the provider.
+  const cursors = hadTimetableResults || input.cursor ? { earlier: wrap(result.cursors.earlier), later: wrap(result.cursors.later) } : undefined;
 
   const first = journeys[0];
   const originTz = result.originTz ?? first?.legs.find((l) => l.from.tz)?.from.tz;
@@ -343,11 +374,13 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
 }
 
 /**
- * When no journey exists, check whether an endpoint is beyond walking reach of
- * any station. If exactly one endpoint is stranded, plan to (or from) a few
- * stations near it in parallel and suggest the nearest one trains really reach:
- * the nearest station is often on a network that doesn't connect (e.g. Amtrak
- * reaches Gainesville, GA, but no data links it to Atlanta's MARTA).
+ * When no journey exists, find out why and build the best trip anyway.
+ *
+ * For each endpoint beyond walking reach of any station, gather a few nearby
+ * candidate stations (incl. the nearest mainline one: urban networks often do
+ * not connect to intercity trains in the data). Try station pairs nearest
+ * first, one request at a time (Transitous rate-limits bursts), and stitch
+ * the long walks onto the first rail connection found.
  */
 async function explainNoRoute(
   input: PlanInput,
@@ -365,142 +398,145 @@ async function explainNoRoute(
   const nearby = await (nearbyP ?? Promise.all(ends.map(([, p]) => nearbyRailStations(p, options.modes, 4, t))));
   note(`nearby: ${nearby.map((l) => (l === undefined ? "lookup failed" : l.map((c) => `${c.place.name} ${Math.round(c.distance / 1000)}km`).join(", ") || "none")).join(" | ")}`);
 
-  const hints: (StationHint & { candidates?: NearestStation[] })[] = [];
+  const hints: StationHint[] = [];
+  const cands: Record<"from" | "to", (NearestStation | null)[]> = { from: [null], to: [null] };
   nearby.forEach((list, i) => {
     const which = ends[i][0];
     if (list === undefined) return; // lookup failed: say nothing rather than guess
     if (!list.length) return void hints.push({ which, station: null });
     const n = list[0];
     const walkMinutes = walkMinutesFor(n.distance);
-    if (walkMinutes > walk)
-      hints.push({ which, station: n.place, distance: n.distance, walkMinutes, candidates: list });
+    if (walkMinutes > walk) {
+      hints.push({ which, station: n.place, distance: n.distance, walkMinutes });
+      // Two nearest plus the nearest mainline station (nearbyRailStations puts it last if needed).
+      const top = list.slice(0, 2);
+      const last = list[list.length - 1];
+      if (list.length > 2 && !top.includes(last)) top.push(last);
+      cands[which] = top;
+    }
   });
-  if (!hints.length) return {};
-  let stitched: Journey[] | undefined;
+  if (!hints.length || hints.some((h) => !h.station)) return { hints: hints.length ? hints : undefined };
 
-  const stranded = hints.filter((h) => h.station);
-  if (stranded.length === 1 && hints.length === 1 && remaining() > 4000) {
-    const h = stranded[0];
-    const timeoutMs = Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500));
-    // One at a time, nearest first: Transitous rate-limits bursts (seen from
-    // Vercel's shared egress IPs), and we can stop at the first reachable one.
-    const tries: (Journey[] | null | undefined)[] = h.candidates!.map(() => undefined);
-    const check = async (c: NearestStation) =>
-      enforceRailOnly(
-        (
-          await planTransitous({
-            from: h.which === "to" ? from : c.place,
-            to: h.which === "to" ? c.place : to,
-            options: { ...options, maxWalkMinutes: walk },
-            language: input.language,
-            timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
-          })
-        ).journeys,
-        options.modes,
-      ).kept;
-    for (let i = 0; i < h.candidates!.length && remaining() > 3500; i++) {
-      const c = h.candidates![i];
-      try {
-        tries[i] = await check(c);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        note(`verify ${c.place.name} failed: ${msg}`);
-        tries[i] = null;
-        if (/rate-limit/i.test(msg) && remaining() > 5000) {
-          await new Promise((r) => setTimeout(r, 1200));
-          try {
-            tries[i] = await check(c);
-          } catch (e2) {
-            note(`verify ${c.place.name} retry failed: ${e2 instanceof Error ? e2.message : String(e2)}`);
-          }
-        }
+  // Pairs ordered by total walking distance; at most 5 upstream checks.
+  const pairs = cands.from
+    .flatMap((a) => cands.to.map((b) => [a, b] as const))
+    .sort((x, y) => (x[0]?.distance ?? 0) + (x[1]?.distance ?? 0) - ((y[0]?.distance ?? 0) + (y[1]?.distance ?? 0)))
+    .slice(0, 6);
+  const railFor = async (a: NearestStation | null, b: NearestStation | null, time: string | null) =>
+    enforceRailOnly(
+      (
+        await planTransitous({
+          from: a?.place ?? from,
+          to: b?.place ?? to,
+          options: { ...options, time, arriveBy: time ? false : options.arriveBy, maxWalkMinutes: walk },
+          language: input.language,
+          timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
+        })
+      ).journeys,
+      options.modes,
+    ).kept;
+
+  for (const [a, b] of pairs) {
+    if (remaining() < 4000) break;
+    let rail: Journey[] = [];
+    try {
+      rail = await railFor(a, b, options.time);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      note(`check ${a?.place.name ?? "start"} → ${b?.place.name ?? "end"} failed: ${msg}`);
+      if (/rate-limit/i.test(msg) && remaining() > 5000) {
+        await new Promise((r) => setTimeout(r, 1200));
+        rail = await railFor(a, b, options.time).catch(() => []);
       }
-      if (tries[i]?.length) break;
     }
-    note(`verify: ${tries.map((k, i) => `${h.candidates![i].place.name}=${k === undefined ? "skipped" : k === null ? "error" : k.length}`).join(", ")}`);
-    const idx = tries.findIndex((k) => k && k.length);
-    if (idx >= 0) {
-      const c = h.candidates![idx];
-      const best = tries[idx]!.reduce((a, b) => (b.duration < a.duration ? b : a));
-      Object.assign(h, {
-        station: c.place,
-        distance: c.distance,
-        walkMinutes: walkMinutesFor(c.distance),
-        reachable: true,
-        duration: best.duration,
-        lines: [...new Set(best.legs.filter((l) => l.line).map((l) => l.line!.name))],
-      });
-      if (remaining() > 3000) {
-        try {
-          stitched = await withLongWalk(input, h.which, c.place, tries[idx]!, walk, remaining, note);
-        } catch (e) {
-          note(`long walk failed: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-    } else if (tries.every((k) => Array.isArray(k))) {
-      h.reachable = false; // every candidate answered, none reachable
+    note(`check ${a?.place.name ?? "start"} → ${b?.place.name ?? "end"}: ${rail.length}`);
+    if (!rail.length) continue;
+
+    for (const [st, which] of [
+      [a, "from"],
+      [b, "to"],
+    ] as const) {
+      const h = hints.find((x) => x.which === which);
+      if (h && st) Object.assign(h, { station: st.place, distance: st.distance, walkMinutes: walkMinutesFor(st.distance), reachable: true });
     }
+    try {
+      const stitched = await withLongWalks(input, a?.place ?? null, b?.place ?? null, rail, walk, remaining, note, railFor, a, b);
+      if (stitched.length) return { hints, stitched };
+    } catch (e) {
+      note(`long walk failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return { hints };
   }
-  return { hints: hints.map(({ candidates: _c, ...h }) => h), stitched };
+  for (const h of hints) if (h.reachable === undefined) h.reachable = false;
+  return { hints };
 }
 
-/** Add the long walk between a stranded endpoint and `station` to journeys that reach the station. */
-async function withLongWalk(
+/** Add long walks between stranded endpoints and their stations to rail journeys. */
+async function withLongWalks(
   input: PlanInput,
-  which: "from" | "to",
-  station: Place,
-  toStation: Journey[],
+  fromSt: Place | null,
+  toSt: Place | null,
+  rail: Journey[],
   walk: number,
   remaining: () => number,
   note: (m: string) => void,
+  railFor: (a: NearestStation | null, b: NearestStation | null, time: string | null) => Promise<Journey[]>,
+  a: NearestStation | null,
+  b: NearestStation | null,
 ): Promise<Journey[]> {
   const { from, to, options } = input;
-  const timeoutMs = Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500));
-  const st = { ...station };
-  const stitch = (legs: Leg[], id: string, transfers: number): Journey => {
-    const startTime = legs[0].startTime;
-    const endTime = legs[legs.length - 1].endTime;
-    return { id, provider: "transitous", startTime, endTime, ...journeyTotals(legs, startTime, endTime), transfers, legs };
-  };
-  // The station-side leg of the rail journey ends/starts at the station itself.
-  const rename = (l: Leg, end: "from" | "to"): Leg => ({ ...l, [end]: { ...l[end], name: st.name } });
-
-  if (which === "to") {
-    const out: Journey[] = [];
-    let template: Leg | null = null;
-    for (const j of toStation.slice(0, 6)) {
-      const legs = j.legs.map((l, i) => (i === j.legs.length - 1 && l.mode === "WALK" ? rename(l, "to") : l));
-      const tail = legs[legs.length - 1];
-      template ??= await walkLeg(st, { ...to, name: "Destination" }, tail.endTime, timeoutMs);
-      const shift = new Date(tail.endTime).getTime() - new Date(template.startTime).getTime();
-      const w = shiftLeg(template, shift);
-      w.from = { ...w.from, name: st.name };
-      out.push(stitch([...legs, w], `${j.id}-w`, j.transfers));
-    }
-    note(`long walk to destination: ${template ? Math.round(template.duration / 60) : "?"} min`);
-    return out;
+  const timeoutMs = () => Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500));
+  let lead: Leg | null = null;
+  if (fromSt) {
+    // Walk first, then take the trains that leave after you arrive.
+    const depart = options.time && !options.arriveBy ? options.time : new Date().toISOString();
+    lead = await walkLeg({ ...from, name: "Start" }, { ...fromSt }, depart, timeoutMs());
+    note(`long walk from start: ${Math.round(lead.duration / 60)} min`);
+    const later = await railFor(a, b, lead.endTime).catch(() => []);
+    if (later.length) rail = later;
   }
+  let tail: Leg | null = null;
+  const out: Journey[] = [];
+  for (const j of rail.slice(0, 6)) {
+    let legs = [...j.legs];
+    if (fromSt && legs[0].mode === "WALK") legs[0] = { ...legs[0], from: { ...legs[0].from, name: fromSt.name } };
+    if (toSt && legs[legs.length - 1].mode === "WALK") {
+      const l = legs[legs.length - 1];
+      legs[legs.length - 1] = { ...l, to: { ...l.to, name: toSt.name } };
+    }
+    if (lead) {
+      const w = shiftLeg(lead, new Date(legs[0].startTime).getTime() - new Date(lead.endTime).getTime());
+      legs = [{ ...w, to: { ...w.to, name: fromSt!.name } }, ...legs];
+    }
+    if (toSt) {
+      const end = legs[legs.length - 1].endTime;
+      tail ??= await walkLeg({ ...toSt }, { ...to, name: "Destination" }, end, timeoutMs());
+      const w = shiftLeg(tail, new Date(end).getTime() - new Date(tail.startTime).getTime());
+      legs = [...legs, { ...w, from: { ...w.from, name: toSt.name } }];
+    }
+    out.push(stitchJourney(legs, `${j.id}-w`, j.transfers));
+  }
+  if (tail) note(`long walk to destination: ${Math.round(tail.duration / 60)} min`);
+  return out;
+}
 
-  // Stranded start: walk first, then catch trains from the station.
-  const depart = options.time && !options.arriveBy ? options.time : new Date().toISOString();
-  const w = await walkLeg({ ...from, name: "Start" }, st, depart, timeoutMs);
-  note(`long walk from start: ${Math.round(w.duration / 60)} min`);
-  const r = await planTransitous({
-    from: st,
-    to,
-    options: { ...options, time: w.endTime, arriveBy: false, maxWalkMinutes: walk },
-    language: input.language,
-    timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
-  });
-  return enforceRailOnly(r.journeys, options.modes)
-    .kept.slice(0, 6)
-    .map((j) => {
-      const legs = j.legs.map((l, i) => (i === 0 && l.mode === "WALK" ? rename(l, "from") : l));
-      const first = new Date(legs[0].startTime).getTime();
-      const lead = shiftLeg(w, first - new Date(w.endTime).getTime());
-      lead.to = { ...lead.to, name: st.name };
-      return stitch([lead, ...legs], `${j.id}-w`, j.transfers);
-    });
+function stitchJourney(legs: Leg[], id: string, transfers: number): Journey {
+  const startTime = legs[0].startTime;
+  const endTime = legs[legs.length - 1].endTime;
+  return { id, provider: "transitous", startTime, endTime, ...journeyTotals(legs, startTime, endTime), transfers, legs };
+}
+
+/** Walking the whole way, as a journey. */
+async function walkingJourney(input: PlanInput, remaining: () => number): Promise<Journey> {
+  const depart = input.options.time && !input.options.arriveBy ? input.options.time : new Date().toISOString();
+  const leg = await walkLeg(
+    { ...input.from, name: "Start" },
+    { ...input.to, name: "Destination" },
+    depart,
+    Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
+  );
+  const j = stitchJourney([leg], `walk-${Math.round(input.from.lat * 1e4)}-${Math.round(input.to.lat * 1e4)}`, 0);
+  return { ...j, transfers: 0 };
 }
 
 function shiftLeg(l: Leg, ms: number): Leg {

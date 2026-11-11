@@ -41,6 +41,8 @@ export type JourneyListProps = {
   toName?: string;
   /** Re-plan with an endpoint moved to the suggested station. */
   onUseStation?: (which: "from" | "to", place: Place) => void;
+  /** Straight-line distance between A and B, meters. */
+  apart?: number;
 };
 
 const GEOCODE_ATTRIBUTION = "Search: Transitous & Photon by komoot · © OpenStreetMap contributors";
@@ -71,6 +73,7 @@ export default function JourneyList({
   fromName,
   toName,
   onUseStation,
+  apart,
 }: JourneyListProps) {
   const now = useNow();
   const [paging, setPaging] = useState<"earlier" | "later" | null>(null);
@@ -129,7 +132,9 @@ export default function JourneyList({
         <>
           <div className="mb-1.5 flex items-center justify-between px-1">
             <p className="text-[12px] font-medium text-muted" aria-live="polite">
-              {replanning ? "Updating routes…" : `${journeys.length} ${journeys.length === 1 ? "route" : "routes"} by train`}
+              {replanning
+                ? "Updating routes…"
+                : `${journeys.length} ${journeys.length === 1 ? "route" : "routes"}${journeys.some((j) => j.legs.some(isRail)) ? "" : " on foot"}${apart ? ` · ${formatDistance(apart)} apart` : ""}`}
             </p>
             {onEarlier && (
               <PageButton
@@ -255,11 +260,13 @@ function JourneyCard({
 
       {/* trains / walking / waiting breakdown */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] leading-5 text-ink-2 tabular">
-        <span className="inline-flex items-center gap-1" title="Time on trains">
-          <TrainFront size={13} aria-hidden className="text-muted" />
-          <span className="sr-only">On trains</span>
-          {formatDuration(b.railDuration)}
-        </span>
+        {b.railDuration > 0 && (
+          <span className="inline-flex items-center gap-1" title="Time on trains">
+            <TrainFront size={13} aria-hidden className="text-muted" />
+            <span className="sr-only">On trains</span>
+            {formatDuration(b.railDuration)}
+          </span>
+        )}
         <span className="inline-flex items-center gap-1" title={`Walking, ${formatDistance(b.walkDistance)}`}>
           <Footprints size={13} aria-hidden className="text-muted" />
           <span className="sr-only">Walking</span>
@@ -415,7 +422,7 @@ function NoResults({
               <li key={h.which} className="text-[13px] leading-snug text-ink-2">
                 {!st ? (
                   <p>
-                    There are no train timetables within about 50 km of {em(name)}. Tracks may still run there (see the
+                    There are no train timetables within about 280 km of {em(name)}. Tracks may still run there (see the
                     railway overlay), but this region&rsquo;s schedules aren&rsquo;t in the open data Only Trains uses yet.
                   </p>
                 ) : h.reachable ? (

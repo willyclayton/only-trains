@@ -487,30 +487,25 @@ export async function walkLeg(
   timeoutMs: number,
 ): Promise<Leg> {
   const start = new Date(departAt).getTime();
-  try {
-    const p = new URLSearchParams();
-    p.set("fromPlace", `${round6(from.lat)},${round6(from.lon)}`);
-    p.set("toPlace", `${round6(to.lat)},${round6(to.lon)}`);
-    p.set("time", new Date(start).toISOString());
-    p.set("transitModes", "SUBWAY");
-    p.set("maxTransfers", "0");
-    p.set("preTransitModes", "WALK");
-    p.set("postTransitModes", "WALK");
-    p.set("maxPreTransitTime", "60");
-    p.set("maxPostTransitTime", "60");
-    p.set("directModes", "WALK");
-    p.set("maxDirectTime", String(TRANSITOUS_MAX_DIRECT_SECONDS));
-    p.set("numItineraries", "1");
-    p.set("timeout", String(Math.max(3, Math.floor(timeoutMs / 1000) - 1)));
-    const url = `${TRANSITOUS_BASE}${PLAN_PATH}?${p}`;
-    const raw = await cached(`walk:${url}`, 10 * 60_000, () => fetchPlan(url, timeoutMs));
-    const d = (raw.direct ?? []).find((x) => x.legs?.length && x.legs.every((l) => l.mode === "WALK"));
-    if (d) {
-      const legs = d.legs.map((l, i) => normalizeLeg(l, i === 0, i === d.legs.length - 1).leg);
-      const geometry = legs.flatMap((l) => l.geometry);
-      const steps = legs.flatMap((l) => l.steps ?? []);
-      const distance = Math.round(legs.reduce((s, l) => s + (l.distance ?? 0), 0));
-      const dur = d.duration;
+  // Transitous routes walks up to roughly 15 km; route longer ones (up to
+  // ~65 km) as a chain of street-routed pieces between points on the line.
+  const total = haversine(from, to);
+  const pieces = total <= 13_000 ? 1 : total <= 65_000 ? Math.ceil(total / 13_000) : 0;
+  if (pieces) {
+    const pts: LatLon[] = Array.from({ length: pieces + 1 }, (_, i) => ({
+      lat: from.lat + ((to.lat - from.lat) * i) / pieces,
+      lon: from.lon + ((to.lon - from.lon) * i) / pieces,
+    }));
+    const parts: { duration: number; legs: Leg[] }[] = [];
+    for (let i = 0; i < pieces; i++) {
+      const part = await streetWalk(pts[i], pts[i + 1], new Date(start).toISOString(), timeoutMs).catch(() => null);
+      if (!part) break;
+      parts.push(part);
+    }
+    if (parts.length === pieces) {
+      const legs = parts.flatMap((x) => x.legs);
+      const dur = parts.reduce((sum, x) => sum + x.duration, 0);
+      const steps = legs.flatMap((l) => l.steps ?? []).filter((st) => !/^Arrive at /i.test(st.instruction) || st === legs[legs.length - 1].steps?.at(-1));
       return {
         mode: "WALK",
         from: { name: from.name, lat: from.lat, lon: from.lon, departure: new Date(start).toISOString() },
@@ -518,13 +513,11 @@ export async function walkLeg(
         startTime: new Date(start).toISOString(),
         endTime: new Date(start + dur * 1000).toISOString(),
         duration: dur,
-        distance,
-        geometry,
+        distance: Math.round(legs.reduce((sum, l) => sum + (l.distance ?? 0), 0)),
+        geometry: legs.flatMap((l) => l.geometry),
         steps,
       };
     }
-  } catch {
-    // fall through to the estimate
   }
   const straight = haversine(from, to);
   const distance = Math.round(straight * 1.3);
@@ -543,4 +536,24 @@ export async function walkLeg(
     ],
     steps: [{ instruction: `Walk about ${Math.round(distance / 1000)} km to ${to.name} (no street route available; straight-line estimate)`, distance }],
   };
+}
+
+async function streetWalk(from: LatLon, to: LatLon, departAt: string, timeoutMs: number): Promise<{ duration: number; legs: Leg[] } | null> {
+  const p = new URLSearchParams();
+  p.set("fromPlace", `${round6(from.lat)},${round6(from.lon)}`);
+  p.set("toPlace", `${round6(to.lat)},${round6(to.lon)}`);
+  p.set("time", departAt);
+  p.set("transitModes", "RAIL");
+  p.set("maxTransfers", "0");
+  p.set("maxPreTransitTime", "60");
+  p.set("maxPostTransitTime", "60");
+  p.set("directModes", "WALK");
+  p.set("maxDirectTime", String(TRANSITOUS_MAX_DIRECT_SECONDS));
+  p.set("numItineraries", "1");
+  p.set("timeout", String(Math.max(3, Math.floor(timeoutMs / 1000) - 1)));
+  const url = `${TRANSITOUS_BASE}${PLAN_PATH}?${p}`;
+  const raw = await cached(`walk:${url.replace(/time=[^&]+&/, "")}`, 10 * 60_000, () => fetchPlan(url, timeoutMs));
+  const d = (raw.direct ?? []).find((x) => x.legs?.length && x.legs.every((l) => l.mode === "WALK"));
+  if (!d) return null;
+  return { duration: d.duration, legs: d.legs.map((l, i) => normalizeLeg(l, i === 0, i === d.legs.length - 1).leg) };
 }
