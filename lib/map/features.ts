@@ -116,7 +116,7 @@ function findMajor(list: MajorStop[], s: StopTime): MajorStop | undefined {
   const c: Coord = [s.lon, s.lat];
   return list.find((m) => {
     const d = metersBetween(m.coord, c);
-    return d < MERGE_ANY_NAME_M || (d < MERGE_SAME_NAME_M && m.name === s.name);
+    return d < MERGE_ANY_NAME_M || (d < MERGE_SAME_NAME_M && (m.name === s.name || PLACEHOLDER.test(s.name.trim())));
   });
 }
 
@@ -125,8 +125,23 @@ function clock(st: StopTime | undefined, which: "arrival" | "departure"): string
   return formatClock(which === "arrival" ? st.arrival ?? st.departure : st.departure ?? st.arrival, st.tz);
 }
 
-export function buildStops(journey: Journey | null): FeatureCollection<Point, StopProps> {
+/** Provider placeholders for the trip's own endpoints (MOTIS: "START"/"END", normalized "Start"/"Destination"). */
+const PLACEHOLDER = /^(start|end|destination|origin)$/i;
+
+export function buildStops(
+  journey: Journey | null,
+  names: { fromName?: string; toName?: string } = {},
+): FeatureCollection<Point, StopProps> {
   if (!journey) return EMPTY_FC as FeatureCollection<Point, StopProps>;
+  const firstLeg = journey.legs[0];
+  const lastLeg = journey.legs[journey.legs.length - 1];
+  // A rail leg that starts/ends the trip carries the trip endpoint's placeholder name.
+  const nameOf = (s: StopTime): string => {
+    if (!PLACEHOLDER.test(s.name.trim()) && s.name.trim()) return s.name;
+    if (firstLeg && s === firstLeg.from && names.fromName) return names.fromName;
+    if (lastLeg && s === lastLeg.to && names.toName) return names.toName;
+    return s.name || "Stop";
+  };
   const majors: MajorStop[] = [];
   const minors: Feature<Point, StopProps>[] = [];
 
@@ -139,14 +154,14 @@ export function buildStops(journey: Journey | null): FeatureCollection<Point, St
       board.legs.add(i);
       board.departure = leg.from;
     } else {
-      majors.push({ coord: [leg.from.lon, leg.from.lat], name: leg.from.name, legs: new Set([i]), departure: leg.from });
+      majors.push({ coord: [leg.from.lon, leg.from.lat], name: nameOf(leg.from), legs: new Set([i]), departure: leg.from });
     }
     const alight = findMajor(majors, leg.to);
     if (alight) {
       alight.legs.add(i);
       alight.arrival = leg.to;
     } else {
-      majors.push({ coord: [leg.to.lon, leg.to.lat], name: leg.to.name, legs: new Set([i]), arrival: leg.to });
+      majors.push({ coord: [leg.to.lon, leg.to.lat], name: nameOf(leg.to), legs: new Set([i]), arrival: leg.to });
     }
 
     for (const s of leg.intermediateStops ?? []) {
@@ -234,11 +249,15 @@ export type Badge = {
   key: string;
   legIndex: number;
   coord: Coord;
+  /** Positions along the leg to try, best (middle) first. */
+  candidates: { coord: Coord; offCenter: number }[];
   label: string;
   title: string;
   color: string;
   textColor: string;
 };
+
+const BADGE_FRACTIONS = [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.12, 0.88];
 
 export function buildBadges(journey: Journey | null): Badge[] {
   if (!journey) return [];
@@ -248,6 +267,7 @@ export function buildBadges(journey: Journey | null): Badge[] {
     const line = legLine(leg);
     const at = pointAlong(line, 0.5);
     if (!at) return;
+    const candidates = BADGE_FRACTIONS.map((f) => ({ coord: pointAlong(line, f) ?? at, offCenter: Math.abs(f - 0.5) }));
     const color = legColor(leg);
     const label = leg.line?.name || leg.line?.shortName || leg.line?.tripName || "Train";
     const title = [label, leg.headsign ? `towards ${leg.headsign}` : "", leg.line?.agency ? `· ${leg.line.agency}` : ""]
@@ -257,6 +277,7 @@ export function buildBadges(journey: Journey | null): Badge[] {
       key: `${journey.id}:${i}`,
       legIndex: i,
       coord: at,
+      candidates,
       label,
       title,
       color,
@@ -264,6 +285,18 @@ export function buildBadges(journey: Journey | null): Badge[] {
     });
   });
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Trip endpoints (invisible label blockers under the A/B pins)
+// ---------------------------------------------------------------------------
+
+export function buildEnds(from: { lat: number; lon: number } | null, to: { lat: number; lon: number } | null): FeatureCollection<Point> {
+  const features: Feature<Point>[] = [];
+  for (const p of [from, to]) {
+    if (p) features.push({ type: "Feature", geometry: { type: "Point", coordinates: [p.lon, p.lat] }, properties: {} });
+  }
+  return { type: "FeatureCollection", features };
 }
 
 // ---------------------------------------------------------------------------

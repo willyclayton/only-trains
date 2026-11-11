@@ -32,6 +32,7 @@ export const SRC = {
   alt: "ot-alt",
   legs: "ot-legs",
   stops: "ot-stops",
+  ends: "ot-ends",
 } as const;
 
 export const LYR = {
@@ -48,7 +49,11 @@ export const LYR = {
   stopMajor: "ot-stop-major",
   stopMinorLabel: "ot-stop-minor-label",
   stopMajorLabel: "ot-stop-major-label",
+  endBlock: "ot-end-block",
 } as const;
+
+/** Rendered things a line badge should not cover. */
+export const BADGE_AVOID_LAYERS = [LYR.stopMajorLabel, LYR.stopMajor, LYR.stopMinorLabel, LYR.stopMinor];
 
 /** Layers that respond to the pointer, top-most first. */
 export const STOP_LAYERS = [LYR.stopMajor, LYR.stopMinor];
@@ -91,7 +96,7 @@ export type MapRuntime = {
   railAvailable: boolean;
   hasRoute: boolean;
   hoverLeg: number;
-  data: { alt: FeatureCollection; legs: FeatureCollection; stops: FeatureCollection };
+  data: { alt: FeatureCollection; legs: FeatureCollection; stops: FeatureCollection; ends: FeatureCollection };
 };
 
 // ---------------------------------------------------------------------------
@@ -371,6 +376,23 @@ function routeLayers(theme: Theme): LayerSpecification[] {
         "text-opacity": dim(stopIsHot, 0.3),
       },
     },
+    // Invisible glyph under each A/B pin: reserves collision space so station
+    // labels pick another anchor instead of hiding under the (DOM) pins.
+    // Top-most, because symbol placement runs from the top layer down.
+    {
+      id: LYR.endBlock,
+      type: "symbol",
+      source: SRC.ends,
+      layout: {
+        "text-field": "\u25A0",
+        "text-font": FONT_REGULAR,
+        "text-size": 30,
+        "text-allow-overlap": true,
+        "text-ignore-placement": false,
+        "text-padding": 0,
+      },
+      paint: { "text-opacity": 0 },
+    },
   ];
 }
 
@@ -381,6 +403,24 @@ function geojson(data: FeatureCollection): SourceSpecification {
 // ---------------------------------------------------------------------------
 // transformStyle
 // ---------------------------------------------------------------------------
+
+const ORDER_OPS = new Set(["<", "<=", ">", ">="]);
+
+/**
+ * OpenFreeMap filters such as `["<=", ["get", "ref_length"], 6]` hit features
+ * without that property; MapLibre v6 then logs a warning per feature and
+ * treats the comparison as false. Coalescing the missing value to a sentinel
+ * that makes the comparison false keeps the semantics and the console quiet.
+ */
+function quietComparisons(expr: unknown): unknown {
+  if (!Array.isArray(expr)) return expr;
+  const [op, a, b] = expr as unknown[];
+  if (typeof op === "string" && ORDER_OPS.has(op) && expr.length === 3 && typeof b === "number" && Array.isArray(a) && a[0] === "get" && a.length === 2) {
+    const sentinel = op.startsWith("<") ? 1e9 : -1e9;
+    return [op, ["coalesce", a, sentinel], b];
+  }
+  return expr.map(quietComparisons);
+}
 
 export function makeTransformStyle(get: () => MapRuntime) {
   return (_previous: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification => {
@@ -395,8 +435,11 @@ export function makeTransformStyle(get: () => MapRuntime) {
     sources[SRC.alt] = geojson(rt.data.alt);
     sources[SRC.legs] = geojson(rt.data.legs);
     sources[SRC.stops] = geojson(rt.data.stops);
+    sources[SRC.ends] = geojson(rt.data.ends);
 
-    const layers = next.layers.filter((l) => !l.id.startsWith("ot-"));
+    const layers = next.layers
+      .filter((l) => !l.id.startsWith("ot-"))
+      .map((l) => ("filter" in l && l.filter ? ({ ...l, filter: quietComparisons(l.filter) } as LayerSpecification) : l));
 
     if (rt.railAvailable) {
       sources[SRC.rail] = railSource(rt.rail.view);

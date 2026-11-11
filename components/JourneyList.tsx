@@ -265,26 +265,26 @@ function JourneyCard({
       </div>
 
       {/* boarding meta + details */}
-      <div className="mt-1.5 flex items-center gap-2 border-t border-line pt-2 text-[12px] leading-4">
-        <p className="min-w-0 flex-1 truncate text-muted">
-          {cancelled ? (
-            <span className="font-semibold text-danger">Cancelled</span>
-          ) : firstRail ? (
-            <>
+      <div className="mt-1.5 flex items-center gap-1 border-t border-line pt-2 text-[12px] leading-4 text-muted">
+        {cancelled ? (
+          <p className="min-w-0 flex-1 font-semibold text-danger">Cancelled</p>
+        ) : firstRail ? (
+          <p className="flex min-w-0 flex-1 items-baseline">
+            <span className="min-w-0 truncate">
               Board <span className="text-ink-2">{lineLabel(firstRail.line, firstRail.mode)}</span> at{" "}
-              <span className="text-ink-2">{firstRail.from.name}</span>{" "}
-              <span className={`tabular ${delay > 0 ? "font-medium text-warn" : live && firstRail.realTime ? "text-ok" : "text-ink-2"}`}>
+              <span className="text-ink-2">{firstRail.from.name}</span>
+            </span>
+            <span className="shrink-0 whitespace-nowrap pl-1">
+              <span className={`tabular ${delay > 0 ? "font-medium text-warn" : firstRail.realTime ? "text-ok" : "text-ink-2"}`}>
                 {formatClock(firstRail.startTime, firstRail.from.tz ?? tz)}
               </span>
-              {delay > 0 && <span className="text-warn"> (+{delay})</span>}
-              {boardIn != null && boardIn >= 0 && boardIn <= 60 && (
-                <span> · {boardIn === 0 ? "now" : `in ${boardIn} min`}</span>
-              )}
-            </>
-          ) : (
-            "Walk the whole way"
-          )}
-        </p>
+              {delay > 0 && <span className="text-warn"> +{delay}</span>}
+              {boardIn != null && boardIn >= 0 && boardIn <= 60 && <span> · {boardIn === 0 ? "now" : `in ${boardIn} min`}</span>}
+            </span>
+          </p>
+        ) : (
+          <p className="min-w-0 flex-1">Walk the whole way</p>
+        )}
         <button
           type="button"
           onClick={(e) => {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { spaceBelow } from "./space";
 
 type PillPopoverProps = {
   /** Visible trigger content. */
@@ -26,7 +27,7 @@ type PillPopoverProps = {
  */
 export function PillPopover({ label, icon, ariaLabel, width = 300, active, onClose, onOpen, children }: PillPopoverProps) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -54,7 +55,7 @@ export function PillPopover({ label, icon, ariaLabel, width = 300, active, onClo
       let leftInViewport = tr.left;
       leftInViewport = Math.min(leftInViewport, br.right - w);
       leftInViewport = Math.max(leftInViewport, br.left);
-      setPos({ left: leftInViewport - ar.left, top: tr.bottom - ar.top + 6, width: w });
+      setPos({ left: leftInViewport - ar.left, top: tr.bottom - ar.top + 6, width: w, maxHeight: spaceBelow(t, tr.bottom + 6) });
     };
     place();
     window.addEventListener("resize", place);
@@ -105,7 +106,7 @@ export function PillPopover({ label, icon, ariaLabel, width = 300, active, onClo
             setOpen(true);
           }
         }}
-        className={`inline-flex h-8 max-w-full shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border pl-2.5 pr-2 text-[12.5px] font-medium transition-colors ${
+        className={`inline-flex h-8 max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-full border pl-2 pr-1.5 text-[12.5px] font-medium transition-colors ${
           open
             ? "border-ink bg-panel text-ink"
             : active
@@ -115,7 +116,7 @@ export function PillPopover({ label, icon, ariaLabel, width = 300, active, onClo
       >
         {icon}
         <span className="truncate">{label}</span>
-        <ChevronDown size={13} aria-hidden className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown size={12} aria-hidden className={`-ml-0.5 shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
         <div
@@ -123,8 +124,8 @@ export function PillPopover({ label, icon, ariaLabel, width = 300, active, onClo
           id={id}
           role="dialog"
           aria-label={ariaLabel}
-          className="ot-fade-in absolute z-40 rounded-xl border border-line bg-panel p-1.5 shadow-panel"
-          style={pos ? { left: pos.left, top: pos.top, width: pos.width } : { visibility: "hidden" }}
+          className="ot-fade-in scroll-thin absolute z-40 overflow-y-auto overscroll-contain rounded-xl border border-line bg-panel p-1.5 shadow-panel"
+          style={pos ? { left: pos.left, top: pos.top, width: pos.width, maxHeight: pos.maxHeight } : { visibility: "hidden" }}
         >
           {children(() => close(true))}
         </div>

@@ -102,7 +102,7 @@ export default function SearchPanel({ from, to, onChange, onSwap, options, onOpt
         </p>
       )}
 
-      <div data-popover-boundary className="relative mt-2.5 flex flex-wrap items-center gap-1.5">
+      <div data-popover-boundary className="relative mt-2.5 flex flex-wrap items-center gap-1">
         <TimeOption options={options} onOptionsChange={onOptionsChange} />
         <WalkOption options={options} onOptionsChange={onOptionsChange} />
         <ModesOption options={options} onOptionsChange={onOptionsChange} />
@@ -186,7 +186,7 @@ function TimeOption({ options, onOptionsChange }: { options: PlanOptions; onOpti
     <PillPopover
       label={timeLabel(options)}
       ariaLabel={`When: ${timeLabel(options)}`}
-      icon={<Clock size={14} aria-hidden className="shrink-0 text-muted" />}
+      icon={<Clock size={13} aria-hidden className="shrink-0 text-muted" />}
       active={current !== "now"}
       width={292}
       onOpen={() => {
@@ -268,7 +268,7 @@ function WalkOption({ options, onOptionsChange }: { options: PlanOptions; onOpti
     <PillPopover
       label={label}
       ariaLabel={`Maximum walk: ${options.maxWalkMinutes} minutes`}
-      icon={<Footprints size={14} aria-hidden className="shrink-0 text-muted" />}
+      icon={<Footprints size={13} aria-hidden className="shrink-0 text-muted" />}
       active={options.maxWalkMinutes !== DEFAULT_MAX_WALK_MINUTES}
       width={232}
     >
@@ -336,7 +336,7 @@ function ModesOption({ options, onOptionsChange }: { options: PlanOptions; onOpt
     <PillPopover
       label={modesSummary(options.modes)}
       ariaLabel={`Train types: ${modesSummary(options.modes)}`}
-      icon={<TrainFront size={14} aria-hidden className="shrink-0 text-muted" />}
+      icon={<TrainFront size={13} aria-hidden className="shrink-0 text-muted" />}
       active={options.modes.length < RAIL_MODES.length}
       width={320}
       onOpen={() => setDraft(options.modes)}

@@ -5,6 +5,7 @@ import { History, LoaderCircle, LocateFixed, SearchX, TriangleAlert, X } from "l
 import type { GeocodeResponse, Place, RailMode, ReverseResponse } from "@/lib/types";
 import { RAIL_MODES } from "@/lib/modes";
 import { placeIcon, MODE_ICON } from "./ui/icons";
+import { spaceBelow } from "./ui/space";
 
 /** A suggestion as returned by /api/geocode (Place plus optional station extras). */
 type Suggestion = Place & { modes?: RailMode[] };
@@ -149,6 +150,8 @@ const PlaceInput = forwardRef<PlaceInputHandle, PlaceInputProps>(function PlaceI
   const [recent, setRecent] = useState<Suggestion[]>([]);
   const [geo, setGeo] = useState<{ state: "idle" | "locating" | "error"; message?: string }>({ state: "idle" });
   const abortRef = useRef<AbortController | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [menuMax, setMenuMax] = useState(372);
 
   useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus() }), []);
 
@@ -317,11 +320,23 @@ const PlaceInput = forwardRef<PlaceInputHandle, PlaceInputProps>(function PlaceI
     }
   };
 
+  useEffect(() => {
+    if (!menuVisible) return;
+    const measure = () => {
+      const r = boxRef.current?.getBoundingClientRect();
+      if (r) setMenuMax(Math.min(372, spaceBelow(boxRef.current, r.bottom + 6) - 4));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [menuVisible]);
+
   const activeId = menuVisible && active >= 0 && options[active] ? `${listId}-${active}` : undefined;
 
   return (
     <div className="relative min-w-0">
       <div
+        ref={boxRef}
         className={`flex h-10 items-center rounded-[10px] border bg-panel-2 transition-colors ${
           focused ? "border-ink bg-panel" : "border-line hover:border-line-strong"
         }`}
@@ -362,7 +377,9 @@ const PlaceInput = forwardRef<PlaceInputHandle, PlaceInputProps>(function PlaceI
             if (geo.state === "error") setGeo({ state: "idle" });
           }}
           onKeyDown={onKeyDown}
-          className="h-full min-w-0 flex-1 bg-transparent pl-3 pr-1 text-[14px] text-ink outline-none placeholder:text-faint focus-visible:outline-none"
+          // The wrapper shows focus (ink border); the global :focus-visible ring would draw a square inside it.
+          style={{ outline: "none" }}
+          className="h-full min-w-0 flex-1 bg-transparent pl-3 pr-1 text-[14px] text-ink placeholder:text-faint"
         />
         {status === "loading" && editing && (
           <LoaderCircle size={15} aria-hidden className="mr-1 shrink-0 animate-spin text-faint" />
@@ -387,10 +404,11 @@ const PlaceInput = forwardRef<PlaceInputHandle, PlaceInputProps>(function PlaceI
 
       {menuVisible && (
         <div
-          className="ot-fade-in absolute left-0 right-0 top-full z-30 mt-1.5 overflow-hidden rounded-xl border border-line bg-panel shadow-panel"
+          className="ot-fade-in scroll-thin absolute left-0 right-0 top-full z-30 mt-1.5 overflow-y-auto overscroll-contain rounded-xl border border-line bg-panel shadow-panel"
+          style={{ maxHeight: menuMax }}
           onMouseDown={(e) => e.preventDefault() /* keep focus in the input */}
         >
-          <ul id={listId} role="listbox" aria-label={`${label} suggestions`} className="scroll-thin max-h-[min(55vh,372px)] overflow-y-auto py-1">
+          <ul id={listId} role="listbox" aria-label={`${label} suggestions`} className="py-1">
             {options.map((o, i) => {
               const isActive = i === active;
               const base = `mx-1 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 ${isActive ? "bg-panel-2" : ""}`;
