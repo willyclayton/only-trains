@@ -420,7 +420,15 @@ function Footer({ attribution }: { attribution: string[] }) {
       {items.map((a, i) => (
         <span key={a}>
           {i > 0 && <span aria-hidden> · </span>}
-          {a}
+          {a.split(/(https?:\/\/[^\s,;)]+)/g).map((part, k) =>
+            /^https?:\/\//.test(part) ? (
+              <a key={k} href={part} target="_blank" rel="noopener noreferrer" className="underline decoration-line-strong underline-offset-2 hover:text-muted">
+                {part.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}
+              </a>
+            ) : (
+              part
+            ),
+          )}
         </span>
       ))}
     </footer>

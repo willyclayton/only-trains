@@ -705,42 +705,62 @@ export default function MapView(props: MapViewProps) {
     const onPin = (r: DOMRect) => placed.slice(0, pins).some((q) => overlaps(r, q));
     const onBadge = (r: DOMRect) => placed.slice(pins).some((q) => overlaps(r, q));
 
-    // Longest legs choose first. Each badge tries points along its leg and
-    // takes the one that covers the fewest station labels / dots.
+    // Longest legs choose first. Each badge tries points along its leg (on the
+    // line, then just beside it) and takes the one that covers the fewest
+    // station labels / dots. It never covers a major station or its label:
+    // rather than that it hides until the user zooms in.
     const entries = [...badgeEntries.current].sort((a, b) => screenSize(m, b.bounds) - screenSize(m, a.bounds));
     for (const e of entries) {
       const w = e.el.offsetWidth || 90;
       const h = e.el.offsetHeight || 22;
       const tooShort = screenSize(m, e.bounds) < Math.min(48, w * 0.55);
-      let best: { score: number; coord: [number, number]; rect: DOMRect } | null = null;
+      let best: { score: number; coord: [number, number]; offset: [number, number]; rect: DOMRect } | null = null;
       if (!tooShort) {
-        for (const cand of e.badge.candidates) {
+        outer: for (const cand of e.badge.candidates) {
           const p = m.project(cand.coord);
-          const rect = new DOMRect(p.x - w / 2 - 3, p.y - h / 2 - 3, w + 6, h + 6);
-          if (onBadge(rect)) continue; // never on another badge
-          let score = cand.offCenter * 4;
-          if (onPin(rect)) score += 30;
-          const inOpen = p.x > pad.left && p.x < W - pad.right && p.y > pad.top && p.y < H - pad.bottom;
-          if (!inOpen) score += 20;
-          if (avoid.length) {
-            const feats = m.queryRenderedFeatures(
-              [
-                [rect.left, rect.top],
-                [rect.right, rect.bottom],
-              ],
-              { layers: avoid },
-            );
-            for (const ft of feats) score += ft.layer.id === LYR.stopMajorLabel ? 6 : ft.layer.id === LYR.stopMajor ? 5 : ft.layer.id === LYR.stopMinorLabel ? 2 : 1;
+          const q = m.project(cand.ahead);
+          const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+          // Unit normal to the line; push far enough to clear the line + casing.
+          const nx = -(q.y - p.y) / len;
+          const ny = (q.x - p.x) / len;
+          const push = Math.abs(nx) * (w / 2 + 8) + Math.abs(ny) * (h / 2 + 8);
+          const offsets: [number, number, number][] = [
+            [0, 0, 0],
+            [nx * push, ny * push, 2.5],
+            [-nx * push, -ny * push, 2.5],
+          ];
+          for (const [dx, dy, penalty] of offsets) {
+            const cx = p.x + dx;
+            const cy = p.y + dy;
+            const rect = new DOMRect(cx - w / 2 - 3, cy - h / 2 - 3, w + 6, h + 6);
+            if (onBadge(rect)) continue; // never on another badge
+            let score = cand.offCenter * 4 + penalty;
+            if (onPin(rect)) score += 40;
+            const inOpen = cx > pad.left && cx < W - pad.right && cy > pad.top && cy < H - pad.bottom;
+            if (!inOpen) score += 20;
+            if (avoid.length) {
+              const feats = m.queryRenderedFeatures(
+                [
+                  [rect.left, rect.top],
+                  [rect.right, rect.bottom],
+                ],
+                { layers: avoid },
+              );
+              for (const ft of feats) {
+                const id = ft.layer.id;
+                score += id === LYR.stopMajorLabel || id === LYR.stopMajor ? 40 : id === LYR.stopMinorLabel ? 3 : 1.5;
+              }
+            }
+            if (!best || score < best.score) best = { score, coord: cand.coord, offset: [dx, dy], rect };
+            if (score < 0.5) break outer; // the middle of the line is free
           }
-          if (!best || score < best.score) best = { score, coord: cand.coord, rect };
-          if (score < 0.5) break; // the middle is free
         }
       }
-      const hide = !best;
+      const hide = !best || best.score >= 40;
       e.el.classList.toggle("is-hidden", hide);
       e.el.tabIndex = hide ? -1 : 0;
-      if (best) {
-        e.marker.setLngLat(best.coord);
+      if (best && !hide) {
+        e.marker.setLngLat(best.coord).setOffset(best.offset);
         placed.push(best.rect);
       }
     }

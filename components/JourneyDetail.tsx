@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import React, { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowRightLeft,
   ArrowUp,
@@ -177,9 +177,28 @@ function DelayBadge({ actual, scheduled }: { actual?: string; scheduled?: string
   const d = delayMinutes(actual, scheduled);
   if (!d) return null;
   return (
-    <span className={`ml-1.5 text-[12px] font-semibold tabular ${d > 0 ? "text-warn" : "text-ok"}`}>
-      {d > 0 ? `+${d} min` : `${d} min`}
+    <span className={`font-semibold tabular ${d > 0 ? "text-warn" : "text-ok"}`}>
+      {d > 0 ? `${d} min late` : `${-d} min early`}
     </span>
+  );
+}
+
+/** "Platform 1 · 2 min late · Wait 2 min", skipping empty parts. */
+function MetaLine({ items }: { items: (React.ReactElement<{ actual?: string; scheduled?: string }> | null)[] }) {
+  const shown = items.filter(
+    (el): el is React.ReactElement<{ actual?: string; scheduled?: string }> =>
+      !!el && (el.type !== DelayBadge || delayMinutes(el.props.actual, el.props.scheduled) !== 0),
+  );
+  if (!shown.length) return null;
+  return (
+    <p className="text-[12px] leading-4 text-muted">
+      {shown.map((el, i) => (
+        <span key={i}>
+          {i > 0 && <span aria-hidden> · </span>}
+          {el}
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -547,19 +566,18 @@ function RailLeg({
         <StationTitle
           name={boardName}
           sub={
-            (leg.from.track || waitBefore >= 60 || delayMinutes(leg.startTime, leg.scheduledStartTime) !== 0) && (
-              <p className="text-[12px] leading-4 text-muted">
-                {leg.from.track && <span>Platform {leg.from.track}</span>}
-                {leg.from.track && waitBefore >= 60 && <span aria-hidden> · </span>}
-                {waitBefore >= 60 && (
-                  <span className="inline-flex items-center gap-1">
+            <MetaLine
+              items={[
+                leg.from.track ? <span key="t">Platform {leg.from.track}</span> : null,
+                <DelayBadge key="d" actual={leg.startTime} scheduled={leg.scheduledStartTime} />,
+                waitBefore >= 60 ? (
+                  <span key="w" className="inline-flex items-center gap-1">
                     <Hourglass size={11} aria-hidden />
                     Wait {formatDuration(waitBefore)}
                   </span>
-                )}
-                <DelayBadge actual={leg.startTime} scheduled={leg.scheduledStartTime} />
-              </p>
-            )
+                ) : null,
+              ]}
+            />
           }
         />
       </Row>
@@ -657,12 +675,12 @@ function RailLeg({
         <StationTitle
           name={alightName}
           sub={
-            (leg.to.track || delayMinutes(leg.endTime, leg.scheduledEndTime) !== 0) && (
-              <p className="text-[12px] leading-4 text-muted">
-                {leg.to.track && <span>Platform {leg.to.track}</span>}
-                <DelayBadge actual={leg.endTime} scheduled={leg.scheduledEndTime} />
-              </p>
-            )
+            <MetaLine
+              items={[
+                leg.to.track ? <span key="t">Platform {leg.to.track}</span> : null,
+                <DelayBadge key="d" actual={leg.endTime} scheduled={leg.scheduledEndTime} />,
+              ]}
+            />
           }
         />
       </Row>

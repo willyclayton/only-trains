@@ -249,8 +249,8 @@ export type Badge = {
   key: string;
   legIndex: number;
   coord: Coord;
-  /** Positions along the leg to try, best (middle) first. */
-  candidates: { coord: Coord; offCenter: number }[];
+  /** Positions along the leg to try, best (middle) first; `ahead` gives the local direction. */
+  candidates: { coord: Coord; ahead: Coord; offCenter: number }[];
   label: string;
   title: string;
   color: string;
@@ -267,7 +267,10 @@ export function buildBadges(journey: Journey | null): Badge[] {
     const line = legLine(leg);
     const at = pointAlong(line, 0.5);
     if (!at) return;
-    const candidates = BADGE_FRACTIONS.map((f) => ({ coord: pointAlong(line, f) ?? at, offCenter: Math.abs(f - 0.5) }));
+    const candidates = BADGE_FRACTIONS.map((f) => {
+      const coord = pointAlong(line, f) ?? at;
+      return { coord, ahead: pointAlong(line, Math.min(1, f + 0.03)) ?? coord, offCenter: Math.abs(f - 0.5) };
+    });
     const color = legColor(leg);
     const label = leg.line?.name || leg.line?.shortName || leg.line?.tripName || "Train";
     const title = [label, leg.headsign ? `towards ${leg.headsign}` : "", leg.line?.agency ? `· ${leg.line.agency}` : ""]

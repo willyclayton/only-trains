@@ -105,13 +105,27 @@ export type MapRuntime = {
 
 /** Raster paint for the overlay: quieter under a route, desaturated in the "standard" view. */
 export function railPaint(theme: Theme, view: RailView, hasRoute: boolean) {
-  const base = theme === "dark" ? 0.62 : 0.72;
-  const opacity = hasRoute ? base * 0.68 : base;
+  const base = (theme === "dark" ? 0.7 : 0.82) * (hasRoute ? 0.72 : 1);
+  // Strong at network scale, where the overlay is the only rail information;
+  // quieter at street scale, where its station labels compete with ours.
+  const opacity: ExpressionSpecification = [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    5,
+    base,
+    11,
+    base,
+    14,
+    base * 0.78,
+    17,
+    base * 0.6,
+  ];
   return {
     "raster-opacity": opacity,
     // Standard view colors encode line type; tone them down so official line
     // colors stay the loudest thing on screen. Thematic views keep their keys.
-    "raster-saturation": view === "standard" ? -0.45 : -0.1,
+    "raster-saturation": view === "standard" ? -0.62 : -0.1,
     "raster-contrast": theme === "dark" ? 0.1 : 0,
     "raster-brightness-min": 0,
     "raster-brightness-max": theme === "dark" ? 0.88 : 1,
