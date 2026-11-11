@@ -1,6 +1,23 @@
 "use client";
-/** OWNER: ui agent. STUB — replace the body, keep the exported props type. */
-import type { Journey } from "@/lib/types";
+
+import { useEffect, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  CircleAlert,
+  Footprints,
+  Hourglass,
+  Info,
+  LoaderCircle,
+  RouteOff,
+  TrainFront,
+} from "lucide-react";
+import type { Journey, Leg } from "@/lib/types";
+import { delayMinutes, formatClock, formatDistance, formatDuration } from "@/lib/format";
+import LineChip from "./LineChip";
+import { TimelineBar } from "./ui/ProportionBar";
+import { breakdown, dayOffset, isRail, journeyTz, lineLabel, roundMinutes, transfersLabel } from "./ui/journey";
 
 export type JourneyListProps = {
   journeys: Journey[];
@@ -20,6 +37,392 @@ export type JourneyListProps = {
   ready: boolean;
 };
 
-export default function JourneyList(_props: JourneyListProps) {
-  return <div />;
+const GEOCODE_ATTRIBUTION = "Search: Transitous & Photon by komoot · © OpenStreetMap contributors";
+
+function useNow(intervalMs = 30000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}
+
+export default function JourneyList({
+  journeys,
+  selectedId,
+  onSelect,
+  onOpen,
+  loading,
+  error,
+  warnings,
+  attribution,
+  originTz,
+  onEarlier,
+  onLater,
+  ready,
+}: JourneyListProps) {
+  const now = useNow();
+  const [paging, setPaging] = useState<"earlier" | "later" | null>(null);
+  useEffect(() => {
+    if (!loading) setPaging(null);
+  }, [loading]);
+
+  if (!ready) {
+    return (
+      <div className="px-4 pb-4 pt-4">
+        <EmptyState />
+        <Footer attribution={attribution} />
+      </div>
+    );
+  }
+
+  const hasJourneys = journeys.length > 0;
+  const replanning = loading && !paging && hasJourneys;
+
+  return (
+    <div className="px-3 pb-4 pt-3">
+      {warnings.length > 0 && (
+        <div className="mb-2.5 space-y-1.5 px-0.5">
+          {warnings.map((w) => (
+            <p
+              key={w}
+              className="flex items-start gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-2 text-[12.5px] leading-snug text-ink-2"
+            >
+              <Info size={14} aria-hidden className="mt-[1px] shrink-0 text-muted" />
+              <span>{w}</span>
+            </p>
+          ))}
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="mx-0.5 mb-3 rounded-xl border border-line px-3.5 py-3" role="alert">
+          <p className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+            <CircleAlert size={16} aria-hidden className="shrink-0 text-danger" />
+            Couldn&rsquo;t plan this trip
+          </p>
+          <p className="mt-1 break-words pl-6 text-[12.5px] leading-snug text-muted">{error}</p>
+          <p className="mt-1.5 pl-6 text-[12.5px] leading-snug text-ink-2">
+            Try again in a moment, or nudge A or B closer to a station.
+          </p>
+        </div>
+      )}
+
+      {loading && !hasJourneys && <Skeletons />}
+
+      {!loading && !error && !hasJourneys && <NoResults />}
+
+      {hasJourneys && (
+        <>
+          <div className="mb-1.5 flex items-center justify-between px-1">
+            <p className="text-[12px] font-medium text-muted" aria-live="polite">
+              {replanning ? "Updating routes…" : `${journeys.length} ${journeys.length === 1 ? "route" : "routes"} by train`}
+            </p>
+            {onEarlier && (
+              <PageButton
+                dir="earlier"
+                busy={loading && paging === "earlier"}
+                onClick={() => {
+                  setPaging("earlier");
+                  onEarlier();
+                }}
+              />
+            )}
+          </div>
+
+          <ul
+            className={`space-y-2 transition-opacity ${replanning ? "pointer-events-none opacity-50" : ""}`}
+            aria-label="Routes"
+            aria-busy={loading}
+          >
+            {journeys.map((j) => (
+              <li key={j.id}>
+                <JourneyCard
+                  journey={j}
+                  selected={j.id === selectedId}
+                  onSelect={() => onSelect(j.id)}
+                  onOpen={() => onOpen(j.id)}
+                  originTz={originTz}
+                  now={now}
+                />
+              </li>
+            ))}
+          </ul>
+
+          {onLater && (
+            <div className="mt-2 flex justify-center">
+              <PageButton
+                dir="later"
+                busy={loading && paging === "later"}
+                onClick={() => {
+                  setPaging("later");
+                  onLater();
+                }}
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      <Footer attribution={attribution} />
+    </div>
+  );
+}
+
+// ---------- card ----------
+
+function JourneyCard({
+  journey: j,
+  selected,
+  onSelect,
+  onOpen,
+  originTz,
+  now,
+}: {
+  journey: Journey;
+  selected: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  originTz?: string;
+  now: number;
+}) {
+  const tz = journeyTz(j, originTz);
+  const plusDays = dayOffset(j.startTime, j.endTime, tz);
+  const b = breakdown(j);
+  const firstRail = j.legs.find(isRail);
+  const cancelled = j.legs.some((l) => l.cancelled);
+  const live = j.legs.some((l) => isRail(l) && l.realTime);
+
+  const boardIn = firstRail ? Math.round((Date.parse(firstRail.startTime) - now) / 60000) : null;
+  const delay = firstRail ? delayMinutes(firstRail.startTime, firstRail.scheduledStartTime) : 0;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`${formatClock(j.startTime, tz)} to ${formatClock(j.endTime, tz)}, ${formatDuration(b.duration)}, ${transfersLabel(j.transfers)}. Press Enter for details.`}
+      onClick={onSelect}
+      onDoubleClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onOpen();
+        } else if (e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      className={`group relative cursor-pointer rounded-xl border bg-panel px-3.5 pb-2.5 pt-3 outline-offset-2 transition-[border-color,box-shadow] ${
+        selected
+          ? "border-ink shadow-[0_0_0_1px_var(--ink)]"
+          : "border-line hover:border-line-strong"
+      } ${cancelled ? "opacity-70" : ""}`}
+    >
+      {/* times + total */}
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="min-w-0 truncate text-[17px] font-semibold leading-6 tracking-[-0.01em] text-ink tabular">
+          {formatClock(j.startTime, tz)}
+          <span className="mx-1 font-normal text-faint">–</span>
+          {formatClock(j.endTime, tz)}
+          {plusDays > 0 && (
+            <sup className="ml-0.5 align-super text-[10.5px] font-semibold text-muted" title={`Arrives ${plusDays} day${plusDays > 1 ? "s" : ""} later`}>
+              +{plusDays}
+            </sup>
+          )}
+        </p>
+        <p className="shrink-0 text-[16px] font-semibold leading-6 text-ink tabular">{formatDuration(b.duration)}</p>
+      </div>
+
+      {/* leg sequence */}
+      <LegSequence legs={j.legs} />
+
+      <TimelineBar journey={j} className="mt-2.5" />
+
+      {/* trains / walking / waiting breakdown */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] leading-5 text-ink-2 tabular">
+        <span className="inline-flex items-center gap-1" title="Time on trains">
+          <TrainFront size={13} aria-hidden className="text-muted" />
+          <span className="sr-only">On trains</span>
+          {formatDuration(b.railDuration)}
+        </span>
+        <span className="inline-flex items-center gap-1" title={`Walking, ${formatDistance(b.walkDistance)}`}>
+          <Footprints size={13} aria-hidden className="text-muted" />
+          <span className="sr-only">Walking</span>
+          {formatDuration(b.walkDuration)}
+          {b.walkDistance > 0 && <span className="text-muted">· {formatDistance(b.walkDistance)}</span>}
+        </span>
+        {b.waitDuration >= 60 && (
+          <span className="inline-flex items-center gap-1" title="Waiting at stations">
+            <Hourglass size={12} aria-hidden className="text-muted" />
+            <span className="sr-only">Waiting</span>
+            {formatDuration(b.waitDuration)}
+          </span>
+        )}
+        <span className="ml-auto text-muted">{transfersLabel(j.transfers)}</span>
+      </div>
+
+      {/* boarding meta + details */}
+      <div className="mt-1.5 flex items-center gap-2 border-t border-line pt-2 text-[12px] leading-4">
+        <p className="min-w-0 flex-1 truncate text-muted">
+          {cancelled ? (
+            <span className="font-semibold text-danger">Cancelled</span>
+          ) : firstRail ? (
+            <>
+              Board <span className="text-ink-2">{lineLabel(firstRail.line, firstRail.mode)}</span> at{" "}
+              <span className="text-ink-2">{firstRail.from.name}</span>{" "}
+              <span className={`tabular ${delay > 0 ? "font-medium text-warn" : live && firstRail.realTime ? "text-ok" : "text-ink-2"}`}>
+                {formatClock(firstRail.startTime, firstRail.from.tz ?? tz)}
+              </span>
+              {delay > 0 && <span className="text-warn"> (+{delay})</span>}
+              {boardIn != null && boardIn >= 0 && boardIn <= 60 && (
+                <span> · {boardIn === 0 ? "now" : `in ${boardIn} min`}</span>
+              )}
+            </>
+          ) : (
+            "Walk the whole way"
+          )}
+        </p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+          className={`-mr-1.5 inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md pl-2 pr-1 text-[12px] font-semibold transition-colors ${
+            selected ? "text-ink hover:bg-panel-2" : "text-muted hover:bg-panel-2 hover:text-ink"
+          }`}
+        >
+          Details
+          <ChevronRight size={14} aria-hidden />
+        </button>
+      </div>
+      {live && !cancelled && (
+        <span className="absolute right-3.5 top-[-7px] inline-flex items-center gap-1 rounded-full border border-line bg-panel px-1.5 text-[10px] font-semibold uppercase leading-[14px] tracking-wide text-ok">
+          <span className="size-1.5 rounded-full bg-ok" aria-hidden />
+          Live
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** walk 2 › [Blue Line] › walk 12 — very short transfer walks are left out. */
+function LegSequence({ legs }: { legs: Leg[] }) {
+  const shown = legs.filter((l, i) => isRail(l) || l.duration >= 60 || legs.length === 1 || (i > 0 && i < legs.length - 1 && l.duration >= 60));
+  return (
+    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1.5">
+      {shown.map((l, i) => (
+        <span key={i} className="inline-flex min-w-0 items-center gap-1">
+          {i > 0 && <ChevronRight size={12} aria-hidden className="shrink-0 text-faint" />}
+          {l.mode === "WALK" ? (
+            <span className="inline-flex items-center gap-0.5 text-[12px] font-medium text-muted tabular" title={`Walk ${formatDuration(l.duration)}`}>
+              <Footprints size={13} aria-hidden />
+              {roundMinutes(l.duration)}
+            </span>
+          ) : (
+            <LineChip line={l.line} mode={l.mode} size="sm" icon compact />
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------- states ----------
+
+function PageButton({ dir, busy, onClick }: { dir: "earlier" | "later"; busy: boolean; onClick: () => void }) {
+  const Icon = busy ? LoaderCircle : dir === "earlier" ? ChevronUp : ChevronDown;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-panel-2 hover:text-ink disabled:opacity-60"
+    >
+      <Icon size={14} aria-hidden className={busy ? "animate-spin" : ""} />
+      {dir === "earlier" ? "Earlier" : "Later departures"}
+    </button>
+  );
+}
+
+function Skeletons() {
+  return (
+    <div className="space-y-2" aria-label="Finding routes" role="status">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="rounded-xl border border-line px-3.5 pb-3 pt-3.5" style={{ opacity: 1 - i * 0.22 }}>
+          <div className="flex justify-between">
+            <span className="h-4 w-40 animate-pulse rounded bg-panel-2" />
+            <span className="h-4 w-12 animate-pulse rounded bg-panel-2" />
+          </div>
+          <div className="mt-3 flex gap-1.5">
+            <span className="h-5 w-8 animate-pulse rounded-full bg-panel-2" />
+            <span className="h-5 w-20 animate-pulse rounded-full bg-panel-2" />
+            <span className="h-5 w-8 animate-pulse rounded-full bg-panel-2" />
+          </div>
+          <span className="mt-3 block h-1.5 w-full animate-pulse rounded-full bg-panel-2" />
+          <span className="mt-3 block h-3 w-3/5 animate-pulse rounded bg-panel-2" />
+        </div>
+      ))}
+      <span className="sr-only">Finding routes…</span>
+    </div>
+  );
+}
+
+function NoResults() {
+  return (
+    <div className="mx-0.5 rounded-xl border border-dashed border-line-strong px-4 py-5 text-center">
+      <RouteOff size={22} aria-hidden className="mx-auto text-muted" />
+      <p className="mt-2 text-[14px] font-semibold text-ink">No train-only route found</p>
+      <p className="mx-auto mt-1 max-w-[19rem] text-[12.5px] leading-snug text-muted">
+        Try a longer walk limit, turn on more train types, or pick a different time. Points far from any station may need
+        a bus, which Only Trains never uses.
+      </p>
+    </div>
+  );
+}
+
+const EXAMPLES: [string, string, string][] = [
+  ["Wicker Park", "The Loop", "Chicago"],
+  ["Shibuya", "Asakusa", "Tokyo"],
+  ["Gare du Nord", "La Défense", "Paris"],
+];
+
+function EmptyState() {
+  return (
+    <div className="px-0.5">
+      <h2 className="text-[15px] font-semibold tracking-tight text-ink">Where to?</h2>
+      <p className="mt-1 text-[13px] leading-relaxed text-ink-2">
+        Pick a start and a destination anywhere in the world. You&rsquo;ll get every way there by metro, commuter rail,
+        intercity and tram, with walking only at the ends and between platforms. Never a bus.
+      </p>
+      <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Try</p>
+      <ul className="mt-1.5 divide-y divide-line rounded-xl border border-line">
+        {EXAMPLES.map(([a, b, city]) => (
+          <li key={a} className="flex items-center gap-2 px-3 py-2.5 text-[13px] text-ink-2">
+            <span className="truncate font-medium text-ink">{a}</span>
+            <ChevronRight size={13} aria-hidden className="shrink-0 text-faint" />
+            <span className="truncate font-medium text-ink">{b}</span>
+            <span className="ml-auto shrink-0 text-[12px] text-muted">{city}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Footer({ attribution }: { attribution: string[] }) {
+  const items = Array.from(new Set([...attribution, GEOCODE_ATTRIBUTION]));
+  return (
+    <footer className="mt-5 px-1 text-[10.5px] leading-relaxed text-faint">
+      {items.map((a, i) => (
+        <span key={a}>
+          {i > 0 && <span aria-hidden> · </span>}
+          {a}
+        </span>
+      ))}
+    </footer>
+  );
 }

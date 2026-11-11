@@ -146,17 +146,15 @@ export function buildTransitousUrl(q: ProviderQuery): string {
   p.set("postTransitModes", "WALK");
   p.set("maxPreTransitTime", String(walkSec));
   p.set("maxPostTransitTime", String(walkSec));
-  if (q.cursor) {
-    // Paging: direct connections are only returned on the first page.
-    p.set("directModes", "WALK");
-    p.set("pageCursor", q.cursor);
-  } else {
-    p.set("directModes", "WALK");
-  }
+  // Walk-only direct connections (first page only) let us tell the user when walking is quicker.
+  p.set("directModes", "WALK");
+  if (q.cursor) p.set("pageCursor", q.cursor);
   // Direct (walk-only) results are informational; cap at 45 min of walking.
   p.set("maxDirectTime", String(Math.min(45 * 60, TRANSITOUS_MAX_DIRECT_SECONDS)));
   p.set("timetableView", "true");
   p.set("numItineraries", "6");
+  // Without a cap, paged requests can return 40+ itineraries spanning hours.
+  p.set("maxItineraries", "8");
   p.set("detailedTransfers", "true");
   p.set("joinInterlinedLegs", "true");
   if (q.language) p.set("language", q.language);
