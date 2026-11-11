@@ -1,0 +1,457 @@
+/*
+ * Map chrome. Monochrome, built from the tokens in app/globals.css; the only
+ * saturated color comes from line colors passed in as CSS variables.
+ */
+
+.ot-map {
+  --ot-font: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  position: absolute;
+  inset: 0;
+  background: var(--panel-2);
+  font-family: var(--ot-font);
+}
+
+.ot-map .maplibregl-canvas:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* ---------- Controls ---------- */
+
+.ot-map .maplibregl-ctrl-top-right,
+.ot-map .maplibregl-ctrl-top-left {
+  padding-top: max(0px, env(safe-area-inset-top));
+}
+
+.ot-map .maplibregl-ctrl-group {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: visible;
+}
+
+.ot-map .maplibregl-ctrl-group:not(:empty) {
+  box-shadow: var(--shadow);
+}
+
+.ot-map .maplibregl-ctrl-group button {
+  width: 34px;
+  height: 34px;
+  background-color: transparent;
+}
+
+.ot-map .maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--line);
+}
+
+.ot-map .maplibregl-ctrl-group button:first-child {
+  border-radius: 9px 9px 0 0;
+}
+.ot-map .maplibregl-ctrl-group button:last-child {
+  border-radius: 0 0 9px 9px;
+}
+.ot-map .maplibregl-ctrl-group button:only-child {
+  border-radius: 9px;
+}
+
+.ot-map .maplibregl-ctrl button:not(:disabled):hover {
+  background-color: var(--panel-2);
+}
+
+.ot-map .maplibregl-ctrl button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+/* MapLibre's icons are dark SVGs: invert them on the dark theme. */
+@media (prefers-color-scheme: dark) {
+  .ot-map .maplibregl-ctrl-icon,
+  .ot-map .maplibregl-ctrl-attrib-button {
+    filter: invert(0.92);
+  }
+  .ot-map .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-active .maplibregl-ctrl-icon,
+  .ot-map .maplibregl-ctrl-geolocate.maplibregl-ctrl-geolocate-background .maplibregl-ctrl-icon {
+    filter: none;
+  }
+}
+
+/* Scale bars */
+.ot-map .maplibregl-ctrl-scale {
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  border-color: var(--ink-2);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 0 5px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.ot-map .ot-scales {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+  pointer-events: none;
+}
+.ot-map .maplibregl-ctrl-top-left .ot-scales {
+  align-items: flex-start;
+}
+
+/* Attribution */
+.ot-map .maplibregl-ctrl-attrib {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.ot-map .maplibregl-ctrl-attrib a {
+  color: var(--ink-2);
+}
+.ot-map .maplibregl-ctrl-attrib:not(.maplibregl-compact) {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-radius: 6px 0 0 0;
+}
+.ot-map .maplibregl-ctrl-attrib.maplibregl-compact {
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  min-height: 24px;
+}
+.ot-map .maplibregl-ctrl-attrib.maplibregl-compact-show {
+  max-width: min(520px, calc(100vw - 80px));
+}
+.ot-map .maplibregl-ctrl-top-left .maplibregl-ctrl-attrib.maplibregl-compact {
+  margin: 10px 0 0 10px;
+}
+
+/* ---------- Rail layers control ---------- */
+
+.ot-layers {
+  position: relative;
+}
+.ot-layers__btn {
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+}
+.ot-layers__btn[aria-expanded="true"] {
+  background-color: var(--panel-2) !important;
+}
+.ot-layers__dot {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ink);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+.ot-layers__panel {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 0;
+  width: 232px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+  z-index: 5;
+}
+.ot-layers__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ot-layers__title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.ot-layers__sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.ot-switch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background-color 0.15s;
+  cursor: pointer;
+}
+.ot-switch[aria-checked="true"] {
+  background: var(--ink);
+}
+.ot-switch::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  transition: transform 0.15s;
+}
+.ot-switch[aria-checked="true"]::after {
+  transform: translateX(14px);
+}
+.ot-layers__views {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ot-layers__views[aria-disabled="true"] {
+  opacity: 0.45;
+}
+.ot-view {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+  background: transparent;
+}
+.ot-view:hover {
+  background: var(--panel-2);
+}
+.ot-view[aria-checked="true"] {
+  background: var(--panel-2);
+}
+.ot-view__radio {
+  margin-top: 2px;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 999px;
+  border: 1.5px solid var(--line-strong);
+}
+.ot-view[aria-checked="true"] .ot-view__radio {
+  border: 4.5px solid var(--ink);
+}
+.ot-view__label {
+  display: block;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.ot-view__hint {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+.ot-layers__foot {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.ot-layers__foot a {
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------- A / B markers ---------- */
+
+.ot-pin {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: var(--ink);
+  color: var(--panel);
+  border: 2.5px solid var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 4px 12px rgb(0 0 0 / 0.22);
+  font: 700 13px/1 var(--ot-font);
+  letter-spacing: -0.01em;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: transform 0.12s ease;
+}
+.ot-pin--a {
+  border-radius: 999px;
+}
+.ot-pin--b {
+  border-radius: 8px;
+}
+.ot-pin:hover {
+  transform: scale(1.08);
+}
+.maplibregl-marker.ot-pin-marker {
+  z-index: 3;
+}
+.maplibregl-marker.ot-pin-marker:active .ot-pin,
+.maplibregl-marker-dragging .ot-pin {
+  cursor: grabbing;
+  transform: scale(1.12);
+}
+
+/* ---------- Line badges ---------- */
+
+.maplibregl-marker.ot-badge-marker {
+  z-index: 2;
+}
+.ot-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 6px;
+  background: var(--c);
+  color: var(--t);
+  border: 1.5px solid var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 10px rgb(0 0 0 / 0.16);
+  font: 650 11.5px/1.25 var(--ot-font);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+.ot-badge__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ot-badge svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.ot-badge.is-dim {
+  opacity: 0.3;
+}
+.ot-badge.is-hot {
+  transform: scale(1.1);
+}
+.ot-badge.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------- Popups ---------- */
+
+.ot-popup {
+  z-index: 4;
+}
+.ot-popup .maplibregl-popup-content {
+  padding: 0;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  font-family: var(--ot-font);
+}
+.ot-popup .maplibregl-popup-tip {
+  display: none;
+}
+.ot-popup--hover {
+  pointer-events: none;
+}
+
+.ot-stop-pop {
+  padding: 8px 10px 9px;
+  min-width: 120px;
+}
+.ot-stop-pop__name {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.ot-stop-pop__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.ot-stop-pop__k {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ot-stop-pop__swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: var(--c);
+}
+
+.ot-pick {
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  min-width: 156px;
+}
+.ot-pick__btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px 7px 7px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.ot-pick__btn:hover,
+.ot-pick__btn:focus-visible {
+  background: var(--panel-2);
+}
+.ot-pick__glyph {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  background: var(--ink);
+  color: var(--panel);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.ot-pick__glyph--a {
+  border-radius: 999px;
+}
+.ot-pick__glyph--b {
+  border-radius: 5px;
+}
+.ot-pick__coords {
+  padding: 4px 9px 3px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
