@@ -47,4 +47,4 @@ Routing smoke test across 18 cities: `npx tsx scripts/test-plan.ts` (or `npx tsx
 
 ## Coverage
 
-Coverage follows the open timetable data Transitous has. It is strong across Europe, Japan, South Korea, the US and Canada, Australia, Hong Kong and Brazil. Some major systems are missing today (for example the Mexico City Metro and the Delhi Metro), as are mainland China and most of Africa. Where there's no data, the app says so instead of suggesting a bus.
+Coverage follows the open timetable data Transitous has. It is strong across Europe, Japan, South Korea, the US and Canada, Australia, Hong Kong and Brazil. Some major systems are missing today (for example the Mexico City Metro and the Delhi Metro), as are Russia, mainland China and most of Africa. Where there's no data, the app says so instead of suggesting a bus.

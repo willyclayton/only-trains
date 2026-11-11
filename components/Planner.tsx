@@ -215,6 +215,24 @@ export default function Planner() {
       .catch(() => {});
   }, [setPlace]);
 
+  // Pins restored from a shared link carry no real name yet: look them up once.
+  useEffect(() => {
+    (["from", "to"] as const).forEach((which) => {
+      const place = which === "from" ? initial.from : initial.to;
+      if (!place || !/^(Dropped pin|-?\d+\.\d+, -?\d+\.\d+)$/.test(place.name)) return;
+      fetch(`/api/reverse?lat=${place.lat}&lon=${place.lon}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json: { place: Place | null } | null) => {
+          const named = json?.place;
+          if (!named) return;
+          (which === "from" ? setFrom : setTo)((cur) =>
+            cur && cur.id === place.id ? { ...cur, name: named.name, detail: named.detail } : cur,
+          );
+        })
+        .catch(() => {});
+    });
+  }, [initial]);
+
   const onSwap = useCallback(() => {
     setFrom(to);
     setTo(from);

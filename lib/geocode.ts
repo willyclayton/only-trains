@@ -602,7 +602,30 @@ export async function reverseGeocode(lat: number, lon: number, lang = "en"): Pro
       };
     }
   } catch {
-    // both providers down: caller falls back to raw coordinates
+    // Transitous unavailable: try the wide area lookup below
+  }
+
+  // Rural pins: nothing within 400 m. Name the nearest settlement instead
+  // ("Near Permeevo, Mordovia") from a wider Photon search.
+  try {
+    const wsp = new URLSearchParams({ lat: String(lat), lon: String(lon), limit: "5", radius: "15", lang: photonLang(l) });
+    const wurl = `${PHOTON_URL}/reverse?${wsp}`;
+    const wide = (await cached(wurl, () => fetchJson<PhotonResponse>(wurl, 3500))).features ?? [];
+    for (const f of wide) {
+      const p = f.properties ?? {};
+      const town = p.locality || cleanCity(p.city) || p.district || p.county;
+      if (!town) continue;
+      return {
+        id: `rev:${lat.toFixed(6)},${lon.toFixed(6)}`,
+        name: `Near ${town}`,
+        detail: joinUnique([p.county, p.state, p.country], [town]),
+        lat,
+        lon,
+        kind: "other",
+      };
+    }
+  } catch {
+    // all providers down: caller keeps "Dropped pin"
   }
   return null;
 }

@@ -405,15 +405,18 @@ function NoResults({
           {hints.map((h, _i, all) => {
             // Moving one end to a station can't help if the other end has none.
             const otherHopeless = all.some((x) => x.which !== h.which && !x.station);
-            const name = (h.which === "from" ? fromName : toName) || (h.which === "from" ? "Your start" : "Your destination");
-            const other = (h.which === "from" ? toName : fromName) || (h.which === "from" ? "your destination" : "your start");
+            // "Near X" labels read badly mid-sentence ("50 km of Near X"): drop the prefix.
+            const bare = (n?: string) => n?.replace(/^Near\s+/, "");
+            const name = bare(h.which === "from" ? fromName : toName) || (h.which === "from" ? "Your start" : "Your destination");
+            const other = bare(h.which === "from" ? toName : fromName) || (h.which === "from" ? "your destination" : "your start");
             const st = h.station;
             const em = (t: string) => <span className="font-semibold text-ink">{t}</span>;
             return (
               <li key={h.which} className="text-[13px] leading-snug text-ink-2">
                 {!st ? (
                   <p>
-                    {em(name)} has no train station within about 50 km.
+                    There are no train timetables within about 50 km of {em(name)}. Tracks may still run there (see the
+                    railway overlay), but this region&rsquo;s schedules aren&rsquo;t in the open data Only Trains uses yet.
                   </p>
                 ) : h.reachable ? (
                   <p>
