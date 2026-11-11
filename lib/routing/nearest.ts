@@ -78,27 +78,31 @@ export async function nearbyRailStations(
 ): Promise<NearestStation[] | undefined> {
   const allowed = allowedMotisModes(modes);
   if (!allowed.size) return [];
+  const stationsIn = async (half: number) => {
+    const stops = await stopsInBox(p, half, timeoutMs);
+    const byName = new Map<string, NearestStation & { urban: boolean }>();
+    for (const s of stops) {
+      if (!s.name || !Number.isFinite(s.lat) || !Number.isFinite(s.lon)) continue;
+      const served = (s.modes ?? []).filter((m) => allowed.has(m));
+      if (!served.length) continue;
+      const d = Math.round(haversine(p, s));
+      const name = tidyStationName(s.name);
+      const key = name.toLowerCase();
+      const prev = byName.get(key);
+      if (prev && prev.distance <= d) continue;
+      byName.set(key, {
+        distance: d,
+        urban: served.every((m) => URBAN.has(m)),
+        place: { id: `stop:${s.stopId ?? `${s.lat},${s.lon}`}`, name, lat: s.lat, lon: s.lon, kind: "station" },
+      });
+    }
+    return [...byName.values()].sort((a, b) => a.distance - b.distance);
+  };
   try {
     for (const half of BOX_HALF_DEG) {
-      const stops = await stopsInBox(p, half, timeoutMs);
-      const byName = new Map<string, NearestStation & { urban: boolean }>();
-      for (const s of stops) {
-        if (!s.name || !Number.isFinite(s.lat) || !Number.isFinite(s.lon)) continue;
-        const served = (s.modes ?? []).filter((m) => allowed.has(m));
-        if (!served.length) continue;
-        const d = Math.round(haversine(p, s));
-        const name = tidyStationName(s.name);
-        const key = name.toLowerCase();
-        const prev = byName.get(key);
-        if (prev && prev.distance <= d) continue;
-        byName.set(key, {
-          distance: d,
-          urban: served.every((m) => URBAN.has(m)),
-          place: { id: `stop:${s.stopId ?? `${s.lat},${s.lon}`}`, name, lat: s.lat, lon: s.lon, kind: "station" },
-        });
-      }
-      const all = [...byName.values()].sort((a, b) => a.distance - b.distance);
-      const isLast = half === BOX_HALF_DEG[BOX_HALF_DEG.length - 1];
+      const all = await stationsIn(half);
+      const largest = BOX_HALF_DEG[BOX_HALF_DEG.length - 1];
+      const isLast = half === largest;
       // Only trust a nearest hit inside this box's inscribed circle; a corner
       // hit could hide a nearer station just outside the box edge.
       if (!all.length || (!isLast && all[0].distance > half * 111_000)) continue;
@@ -107,10 +111,19 @@ export async function nearbyRailStations(
         const extra = all.find((x) => x.urban === urban);
         if (extra && !picked.includes(extra)) picked.push(extra);
       }
-      return picked
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, max)
-        .map(({ place, distance }) => ({ place, distance }));
+      // Urban networks often don't connect to intercity trains in the data
+      // (MARTA vs Amtrak in Atlanta): make sure a mainline station is a
+      // candidate, looking in the widest box if this one has none.
+      if (!isLast && picked.every((x) => x.urban)) {
+        const main = (await stationsIn(largest)).find((x) => !x.urban);
+        if (main) picked.push(main);
+      }
+      // Keep the mainline candidate even when it is the farthest of the set.
+      const sorted = picked.sort((a, b) => a.distance - b.distance);
+      const top = sorted.slice(0, max);
+      const mainline = sorted.find((x) => !x.urban);
+      if (mainline && !top.includes(mainline)) top[top.length - 1] = mainline;
+      return top.map(({ place, distance }) => ({ place, distance }));
     }
   } catch {
     return undefined;
