@@ -32,7 +32,8 @@ type Group = {
 const CARDINALS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
 
 function cleanStreet(name: string | undefined): string {
-  const n = (name ?? "").replace(/\s+/g, " ").trim();
+  // OSM multi-values ("田原町駅;2番出入口") read better with a separator.
+  const n = (name ?? "").replace(/\s*;\s*/g, ", ").replace(/\s+/g, " ").trim();
   // OSM refs like "4" (platform numbers) or "1;2" are not street names.
   if (!n || /^[\d;,\s-]{1,6}[a-z]?$/i.test(n)) return "";
   return n;

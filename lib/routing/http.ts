@@ -29,8 +29,6 @@ export function userAgent(): string {
     : `OnlyTrains/${APP_VERSION} (${DEFAULT_CONTACT})`;
 }
 
-export type FetchResult<T> = { ok: true; status: number; data: T } | { ok: false; status: number; text: string };
-
 /** fetch() with an AbortSignal timeout; network/timeout failures throw PlanError(502/504). */
 export async function fetchWithTimeout(
   url: string,

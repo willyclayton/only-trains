@@ -83,6 +83,7 @@ type MStep = {
 };
 type MLeg = {
   mode: string;
+  source?: string;
   from: MPlace;
   to: MPlace;
   duration: number;
@@ -297,6 +298,7 @@ function normalizeLeg(l: MLeg, isFirst: boolean, isLast: boolean): NormalizedLeg
   const categoryShort = l.category?.shortName || l.category?.name || undefined;
   const mode = classifyMotisLeg({
     rawMode: l.mode,
+    feed: l.source,
     routeType: l.routeType,
     agency: l.agencyName,
     shortName: l.routeShortName,
@@ -441,14 +443,23 @@ export async function planTransitous(q: ProviderQuery): Promise<ProviderResult> 
     journeys,
     rejected,
     cursors: { earlier: raw.previousPageCursor || undefined, later: raw.nextPageCursor || undefined },
-    originTz: raw.from?.tz || firstLeg?.from?.tz,
-    destinationTz: raw.to?.tz || lastLeg?.to?.tz,
+    // Stop time zones (from the timetable) beat MOTIS' guess for the raw coordinate.
+    originTz: firstRailTz(journeys, "from") || raw.from?.tz || firstLeg?.from?.tz,
+    destinationTz: firstRailTz(journeys, "to") || raw.to?.tz || lastLeg?.to?.tz,
     directWalk: direct
       ? { duration: direct.duration, distance: direct.legs.reduce((s, l) => s + (l.distance ?? 0), 0) }
       : undefined,
     attribution,
     warnings: [],
   };
+}
+
+function firstRailTz(journeys: Journey[], end: "from" | "to"): string | undefined {
+  const j = journeys[0];
+  if (!j) return undefined;
+  const rail = j.legs.filter((l) => l.mode !== "WALK");
+  const leg = end === "from" ? rail[0] : rail[rail.length - 1];
+  return end === "from" ? leg?.from.tz : leg?.to.tz;
 }
 
 function clamp(x: number, lo: number, hi: number) {

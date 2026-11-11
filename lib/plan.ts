@@ -219,9 +219,9 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
         if (result.journeys.length) break;
       } catch (e) {
         if (i === 0) firstError = e;
-        // 400 (bad date etc.) will not improve with more walking
-        if (e instanceof PlanError && e.status === 400) break;
-        if (i === 0) break; // provider down: don't hammer it with escalations
+        // A bad date won't improve with more walking, and a struggling provider
+        // should not be hammered with escalations: stop at the first error.
+        break;
       }
     }
 

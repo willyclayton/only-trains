@@ -86,6 +86,8 @@ export function railModeFromRouteType(rt: number | undefined): RailMode | null {
 
 export type RailContext = {
   rawMode: string;
+  /** Source feed file as reported by MOTIS `leg.source`, e.g. "kr_korea.gtfs.zip/stop_times.txt:12". */
+  feed?: string;
   routeType?: number;
   agency?: string;
   shortName?: string;
@@ -122,6 +124,22 @@ export function looksIntercity(names: string, agency?: string): boolean {
 }
 
 /**
+ * Known feed-level data errors in Transitous sources (checked against `leg.source`).
+ * Each entry rejects the given MOTIS modes from that feed outright.
+ */
+const FEED_RULES: { feed: RegExp; modes: string[]; why: string }[] = [
+  // Seen Nov 2026: Seoul city buses 402/421/3422/9301 come back as TRAM with route_type 0.
+  { feed: /^kr_korea\.gtfs/i, modes: ["TRAM"], why: "Korea (KTDB) feed types city buses as trams" },
+];
+
+export function feedRejects(feed: string | undefined, rawMode: string): string | null {
+  if (!feed) return null;
+  const m = rawMode.toUpperCase();
+  for (const r of FEED_RULES) if (r.feed.test(feed) && r.modes.includes(m)) return r.why;
+  return null;
+}
+
+/**
  * Map a MOTIS leg mode (plus GTFS route type) to an Only Trains RailMode.
  * Returns null when the leg is not rail (and therefore must be rejected).
  */
@@ -129,6 +147,7 @@ export function classifyMotisLeg(ctx: RailContext): LegMode | null {
   const m = (ctx.rawMode || "").toUpperCase();
   if (m === "WALK") return "WALK";
   if (MOTIS_FORBIDDEN.has(m)) return null;
+  if (feedRejects(ctx.feed, m)) return null;
 
   let mode: RailMode | null;
   switch (m) {
@@ -258,6 +277,9 @@ export function lineLabel(i: LabelInput): string {
   // Intercity trains are best known by product + number ("ICE 597", "TGV INOUI 6621").
   if (i.mode === "INTERCITY" && dn && /\d/.test(dn) && /[A-Za-zÀ-ɏ]/.test(dn)) return stripParenNumber(dn);
 
+  // Train-number "short names" (Indian Railways "11078" / "JHELUM EXPRESS"): the name is the long name.
+  if (/^\d{4,6}$/.test(sn) && ln) return ln;
+
   if (sn && ln) {
     const lnHasSn = new RegExp(`(^|[\\s(])${escapeRe(sn)}($|[\\s)])`, "i").test(ln);
     if (lnHasSn && ln.length <= 28) return ln; // "RER A", "Línea 1", "S1 Airport Line"
@@ -307,6 +329,7 @@ export function tripLabel(i: LabelInput): string | undefined {
   // Metro / tram / S-Bahn trip numbers are internal; skip them.
   if (i.mode === "SUBWAY" || i.mode === "LIGHT_RAIL" || i.mode === "OTHER_RAIL" || raw === "SUBURBAN") return undefined;
   if (i.mode === "INTERCITY" && dn && /\d/.test(dn) && /[A-Za-z]/.test(dn)) return stripParenNumber(dn);
+  if (/^\d{4,6}$/.test(sn)) return `Train ${sn}`;
   if (!numbered) return undefined;
   if (i.mode === "COMMUTER" && sn) return undefined; // "RE1" trips: number is noise
   const agency = clean(i.agency);
