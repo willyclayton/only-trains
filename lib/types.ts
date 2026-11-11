@@ -105,10 +105,16 @@ export type Journey = {
   provider: "transitous" | "google";
   startTime: string; // ISO UTC
   endTime: string; // ISO UTC
-  duration: number; // seconds
+  /** Total door-to-door trip time, seconds (endTime − startTime). */
+  duration: number;
   transfers: number;
+  /** Time spent on trains, seconds (sum of rail legs). */
+  railDuration: number;
+  /** Time spent walking, seconds (sum of walk legs). */
+  walkDuration: number;
+  /** Time spent waiting on platforms / for transfers, seconds (duration − rail − walk, ≥ 0). */
+  waitDuration: number;
   walkDistance: number; // meters
-  walkDuration: number; // seconds
   railDistance: number; // meters (approximate)
   legs: Leg[];
 };
