@@ -1,0 +1,94 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+/*
+ * Design principle: the chrome is monochrome. The only saturated color on
+ * screen comes from the trains themselves (official line colors).
+ */
+:root {
+  --bg: #f4f3ef;
+  --panel: #ffffff;
+  --panel-2: #f7f6f3;
+  --ink: #141518;
+  --ink-2: #3b3e45;
+  --muted: #6c7079;
+  --faint: #a3a6ad;
+  --line: #e3e1dc;
+  --line-strong: #cfccc5;
+  --focus: #141518;
+  --walk: #6b7280;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.08);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0e10;
+    --panel: #15171a;
+    --panel-2: #1b1d21;
+    --ink: #f1f1ee;
+    --ink-2: #cfd0cc;
+    --muted: #979aa2;
+    --faint: #62656c;
+    --line: #26292e;
+    --line-strong: #353940;
+    --focus: #f1f1ee;
+    --walk: #9ca3af;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.45);
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-walk: var(--walk);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --shadow-panel: var(--shadow);
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+body {
+  overflow: hidden;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Thin scrollbars inside panels */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
