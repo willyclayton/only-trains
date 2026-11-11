@@ -325,7 +325,8 @@ function normalizeLeg(l: MLeg, isFirst: boolean, isLast: boolean): NormalizedLeg
   if (l.scheduledStartTime) leg.scheduledStartTime = l.scheduledStartTime;
   if (l.scheduledEndTime) leg.scheduledEndTime = l.scheduledEndTime;
   if (l.realTime) leg.realTime = true;
-  if (l.cancelled) leg.cancelled = true;
+  // MOTIS sometimes flags transfer walks as cancelled; only a train can be cancelled.
+  if (l.cancelled && mode !== "WALK") leg.cancelled = true;
 
   if (mode === "WALK") {
     leg.distance = Math.round(l.distance ?? pathLength(geometry));
