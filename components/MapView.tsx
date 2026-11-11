@@ -175,7 +175,8 @@ function labelRoom(map: MLMap, p: Padding): Padding {
   const wide = map.getContainer().clientWidth >= 768;
   const x = wide ? 48 : 20;
   const y = wide ? 28 : 16;
-  return { top: p.top + y, right: p.right + x, bottom: p.bottom + y, left: p.left + x };
+  // Phones: the attribution button and scale sit in the top-left corner.
+  return { top: p.top + (wide ? y : 40), right: p.right + x, bottom: p.bottom + y, left: p.left + x };
 }
 
 /** Is the point inside the part of the viewport not covered by the panel? */
@@ -505,6 +506,16 @@ export default function MapView(props: MapViewProps) {
       }
     };
     m.on("style.load", onStyleLoad);
+
+    // Icons some OpenFreeMap styles reference but their sprite lacks.
+    m.setMissingStyleImageResolver((id) => {
+      if (m.hasImage(id)) return;
+      if (/^circle-\d+$/.test(id)) {
+        m.addImage(id, dotImage(runtime.current.theme), { pixelRatio: 2 });
+      } else {
+        m.addImage(id, { width: 1, height: 1, data: new Uint8Array(4) });
+      }
+    });
 
     // Railway overlay health: if every tile fails (blocked / policy change),
     // switch it off quietly instead of spamming errors.
@@ -882,6 +893,22 @@ function abKey(a: Place, b: Place): string {
 }
 function pKey(p: Place): string {
   return `p:${p.lat},${p.lon}`;
+}
+
+/** A small settlement dot (11 px @2x) for styles that expect a "circle-11" sprite. */
+function dotImage(theme: Theme): ImageData {
+  const size = 22;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, 6, 0, Math.PI * 2);
+  ctx.fillStyle = theme === "dark" ? "#8e9198" : "#7d828b";
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = theme === "dark" ? "#0d0e10" : "#ffffff";
+  ctx.stroke();
+  return ctx.getImageData(0, 0, size, size);
 }
 
 /** Larger side of the projected bounds, in px. */

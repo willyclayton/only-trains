@@ -120,8 +120,10 @@ export function railPaint(theme: Theme, view: RailView, hasRoute: boolean) {
     base * 0.85,
     15,
     base * 0.62,
+    16.5,
+    base * 0.34,
     18,
-    base * 0.5,
+    base * 0.22,
   ];
   return {
     "raster-opacity": opacity,

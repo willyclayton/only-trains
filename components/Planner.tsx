@@ -104,6 +104,19 @@ export default function Planner() {
   const isDesktop = useIsDesktop();
   const abortRef = useRef<AbortController | null>(null);
 
+  // Measure the mobile bottom sheet so the map never fits a route underneath it.
+  const sheetRef = useRef<HTMLElement | null>(null);
+  const [sheetHeight, setSheetHeight] = useState(0);
+  useEffect(() => {
+    const el = sheetRef.current;
+    if (isDesktop || !el) return;
+    const update = () => setSheetHeight(Math.round(el.getBoundingClientRect().height));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isDesktop]);
+
   // Keep the URL shareable.
   useEffect(() => {
     writeUrlState(from, to, options);
@@ -221,7 +234,7 @@ export default function Planner() {
 
   const mapPadding = isDesktop
     ? { top: 48, right: 48, bottom: 48, left: PANEL_WIDTH + 48 }
-    : { top: 32, right: 24, bottom: sheetOpen ? Math.round(window.innerHeight * 0.55) + 16 : 96, left: 24 };
+    : { top: 32, right: 24, bottom: (sheetHeight || Math.round(window.innerHeight * 0.62)) + 16, left: 24 };
 
   const panelBody =
     view === "detail" && selected ? (
@@ -296,6 +309,7 @@ export default function Planner() {
         </aside>
       ) : (
         <aside
+          ref={sheetRef}
           className="absolute inset-x-0 bottom-0 z-10 flex flex-col overflow-hidden rounded-t-2xl border-t border-line bg-panel shadow-panel transition-[height] duration-300"
           style={{ height: sheetOpen ? "62dvh" : "auto", paddingBottom: "env(safe-area-inset-bottom)" }}
         >
