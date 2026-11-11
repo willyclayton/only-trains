@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpDown, Check, Clock, Footprints, TrainFront } from "lucide-react";
 import type { PlanOptions, Place, RailMode } from "@/lib/types";
 import { DEFAULT_MAX_WALK_MINUTES, MAX_WALK_CHOICES, RAIL_MODES } from "@/lib/modes";
@@ -168,6 +168,10 @@ function timeLabel(o: PlanOptions): string {
 
 function TimeOption({ options, onOptionsChange }: { options: PlanOptions; onOptionsChange: (o: PlanOptions) => void }) {
   const current: TimeMode = !options.time ? "now" : options.arriveBy ? "arrive" : "depart";
+  // Clock labels depend on the device time zone: render them only after mount (no SSR mismatch).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const label = mounted ? timeLabel(options) : current === "now" ? "Leave now" : current === "arrive" ? "Arrive by…" : "Depart at…";
   const [mode, setMode] = useState<TimeMode>(current);
   const [value, setValue] = useState<string>(toLocalInput(options.time));
   const draft = useRef({ mode, value });
@@ -184,8 +188,8 @@ function TimeOption({ options, onOptionsChange }: { options: PlanOptions; onOpti
 
   return (
     <PillPopover
-      label={timeLabel(options)}
-      ariaLabel={`When: ${timeLabel(options)}`}
+      label={label}
+      ariaLabel={`When: ${label}`}
       icon={<Clock size={13} aria-hidden className="shrink-0 text-muted" />}
       active={current !== "now"}
       width={292}

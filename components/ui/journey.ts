@@ -69,12 +69,18 @@ export function legTextColor(line: LineInfo | undefined, bg: string): string {
   return readableTextColor(bg);
 }
 
-/** Best compact label for a chip. */
-export function lineLabel(line: LineInfo | undefined, mode: LegMode, compact = false): string {
+/**
+ * Label for a line.
+ * - "compact": short code when there is one ("F", "RE 1", "UP-N") — for dense chip rows
+ * - "medium":  the name unless it is long, then the short code — for inline sentences
+ * - "full":    the best display name ("Tokyo Metro Fukutoshin Line") — for the detail view
+ */
+export function lineLabel(line: LineInfo | undefined, mode: LegMode, variant: "compact" | "medium" | "full" | boolean = "medium"): string {
+  const v = variant === true ? "compact" : variant === false ? "medium" : variant;
   const name = line?.name?.trim();
   const short = line?.shortName?.trim();
-  if (compact && short && short.length <= 6) return short;
-  if (name) return name.length > 18 && short ? short : name;
+  if (v === "compact" && short && short.length <= 6) return short;
+  if (name) return v !== "full" && name.length > 18 && short ? short : name;
   if (short) return short;
   return line?.longName?.trim() || (mode === "WALK" ? "Walk" : "Train");
 }

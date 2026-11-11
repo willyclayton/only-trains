@@ -105,7 +105,7 @@ export type MapRuntime = {
 
 /** Raster paint for the overlay: quieter under a route, desaturated in the "standard" view. */
 export function railPaint(theme: Theme, view: RailView, hasRoute: boolean) {
-  const base = (theme === "dark" ? 0.7 : 0.82) * (hasRoute ? 0.72 : 1);
+  const base = (theme === "dark" ? 0.95 : 0.82) * (hasRoute ? 0.74 : 1);
   // Strong at network scale, where the overlay is the only rail information;
   // quieter at street scale, where its station labels compete with ours.
   const opacity: ExpressionSpecification = [
@@ -116,19 +116,27 @@ export function railPaint(theme: Theme, view: RailView, hasRoute: boolean) {
     base,
     11,
     base,
-    14,
-    base * 0.78,
-    17,
-    base * 0.6,
+    13,
+    base * 0.85,
+    15,
+    base * 0.62,
+    18,
+    base * 0.5,
   ];
   return {
     "raster-opacity": opacity,
     // Standard view colors encode line type; tone them down so official line
     // colors stay the loudest thing on screen. Thematic views keep their keys.
-    "raster-saturation": view === "standard" ? -0.62 : -0.1,
-    "raster-contrast": theme === "dark" ? 0.1 : 0,
-    "raster-brightness-min": 0,
-    "raster-brightness-max": theme === "dark" ? 0.88 : 1,
+    "raster-saturation": view === "standard" ? (theme === "dark" ? -0.45 : -0.62) : -0.1,
+    "raster-contrast": 0,
+    // ORM tiles are drawn for light maps (dark tracks, white halos). On the
+    // dark basemap, "smart invert" them: the shader computes
+    // mix(brightness-min, brightness-max, rgb), so min > max flips lightness,
+    // and the 180° hue spin (applied first) keeps hues roughly as they were.
+    // White halos land on the basemap's near-black.
+    "raster-hue-rotate": theme === "dark" ? 180 : 0,
+    "raster-brightness-min": theme === "dark" ? 0.92 : 0,
+    "raster-brightness-max": theme === "dark" ? 0.05 : 1,
   } as const;
 }
 
@@ -418,6 +426,9 @@ function geojson(data: FeatureCollection): SourceSpecification {
 // transformStyle
 // ---------------------------------------------------------------------------
 
+/** Images some OpenFreeMap styles reference but their sprite does not contain. */
+const MISSING_PATTERNS = new Set(["wood-pattern"]);
+
 const ORDER_OPS = new Set(["<", "<=", ">", ">="]);
 
 /**
@@ -436,6 +447,17 @@ function quietComparisons(expr: unknown): unknown {
   return expr.map(quietComparisons);
 }
 
+function tidyBasemapLayer(l: LayerSpecification): LayerSpecification {
+  let out = l;
+  if ("filter" in out && out.filter) out = { ...out, filter: quietComparisons(out.filter) } as LayerSpecification;
+  if (out.type === "fill" && out.paint && typeof out.paint["fill-pattern"] === "string" && MISSING_PATTERNS.has(out.paint["fill-pattern"])) {
+    const paint = { ...out.paint };
+    delete paint["fill-pattern"];
+    out = { ...out, paint };
+  }
+  return out;
+}
+
 export function makeTransformStyle(get: () => MapRuntime) {
   return (_previous: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification => {
     const rt = get();
@@ -451,9 +473,7 @@ export function makeTransformStyle(get: () => MapRuntime) {
     sources[SRC.stops] = geojson(rt.data.stops);
     sources[SRC.ends] = geojson(rt.data.ends);
 
-    const layers = next.layers
-      .filter((l) => !l.id.startsWith("ot-"))
-      .map((l) => ("filter" in l && l.filter ? ({ ...l, filter: quietComparisons(l.filter) } as LayerSpecification) : l));
+    const layers = next.layers.filter((l) => !l.id.startsWith("ot-")).map(tidyBasemapLayer);
 
     if (rt.railAvailable) {
       sources[SRC.rail] = railSource(rt.rail.view);

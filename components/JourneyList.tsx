@@ -191,7 +191,7 @@ function JourneyCard({
   const plusDays = dayOffset(j.startTime, j.endTime, tz);
   const b = breakdown(j);
   const firstRail = j.legs.find(isRail);
-  const cancelled = j.legs.some((l) => l.cancelled);
+  const cancelled = j.legs.some((l) => isRail(l) && l.cancelled);
   const live = j.legs.some((l) => isRail(l) && l.realTime);
 
   const boardIn = firstRail ? Math.round((Date.parse(firstRail.startTime) - now) / 60000) : null;

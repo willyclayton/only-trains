@@ -540,7 +540,7 @@ function RailLeg({
   const rail: Seg = { kind: "rail", color };
   const stops = leg.intermediateStops ?? [];
   const line = leg.line;
-  const label = lineLabel(line, leg.mode);
+  const label = lineLabel(line, leg.mode, "full");
   const trip = line?.tripName && line.tripName !== label ? line.tripName : undefined;
   const fromTz = leg.from.tz ?? tz;
   const toTz = leg.to.tz ?? tz;
@@ -586,7 +586,7 @@ function RailLeg({
       <BodyRow seg={rail}>
         <div className="pb-0.5 pt-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <LineChip line={line} mode={leg.mode} icon />
+            <LineChip line={line} mode={leg.mode} icon full />
             {leg.headsign && (
               <span className="min-w-0 text-[13px] leading-5 text-ink-2">
                 <span className="text-muted">towards</span> {leg.headsign}

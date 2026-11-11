@@ -302,6 +302,7 @@ export default function MapView(props: MapViewProps) {
       cooperativeGestures: false,
     });
     mapRef.current = m;
+    if (process.env.NODE_ENV === "development") (window as unknown as { __otMap?: MLMap }).__otMap = m; // DEBUG-TEMP
     lastFitKey.current = init.from && init.to ? abKey(init.from, init.to) : init.from || init.to ? pKey((init.from ?? init.to)!) : "";
 
     // ---------------- popups ----------------
