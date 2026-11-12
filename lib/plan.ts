@@ -206,6 +206,8 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
     cursor,
     language: input.language,
     timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
+    // Long-distance lines may run a few times a week (Auckland → Wellington).
+    ...(distance > 300_000 && !cursor ? { searchWindowSec: 86400 } : {}),
   });
 
   const warnings: string[] = [];
@@ -330,37 +332,67 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
   let stationHints: StationHint[] | undefined;
   const hadTimetableResults = journeys.length > 0;
   if (!journeys.length && !input.cursor && remaining() > 2500) {
-    const r = await explainNoRoute(input, attempt.walk, remaining, note, nearbyP);
-    const why = (r.hints ?? [])
-      .map((h) => {
-        const end = h.which === "to" ? "your destination" : "your start";
-        if (!h.station) return `There are no train timetables within about 280 km of ${end}.`;
-        const km = Math.round((h.distance ?? 0) / 1000);
-        return `The nearest station ${h.reachable ? "with a train connection" : ""} to ${end} is ${h.station.name.replace(/\.$/, "")}, ${km} km away.`.replace("  ", " ");
-      })
-      .join(" ");
-    let walking: Journey | null = null;
-    if (remaining() > 2500) walking = await walkingJourney(input, remaining).catch(() => null);
-    let trains = r.stitched?.length ? sortJourneys(r.stitched, options.arriveBy) : [];
-    // Trains that are far slower than just walking are noise, not options.
-    if (walking) trains = trains.filter((j) => j.duration <= walking!.duration * 1.5);
-    if (trains.length) {
-      const longest = Math.max(...trains[0].legs.filter((l) => l.mode === "WALK").map((l) => l.duration));
-      warnings.push(`No station is within walking reach, so these trips include a long walk (up to ${formatDuration(longest)}). ${why}`);
-      journeys = trains;
-      const est = trains[0].legs.find((l) => l.estimated);
-      if (est)
+    // Build the walk-the-whole-way answer first, in parallel, so a slow
+    // search can never leave the user with nothing.
+    const walkingP = walkingJourney(input, remaining).catch(() => null);
+    const shortHop = distance < 2500;
+    const quickWalk = shortHop ? await walkingP : null;
+    if (quickWalk && quickWalk.duration <= Math.max(30, requestedWalk) * 60) {
+      journeys = [quickWalk];
+      warnings.push(`It's ${formatDistance(quickWalk.walkDistance)} on foot, about ${formatDuration(quickWalk.duration)}: quicker than any train.`);
+    } else {
+      // Leave ~8 s for the answer to be assembled and returned.
+      const r = await explainNoRoute(input, attempt.walk, () => remaining() - 8000, note, nearbyP);
+      const why = (r.hints ?? [])
+        .map((h) => {
+          const end = h.which === "to" ? "your destination" : "your start";
+          if (!h.station) return `There are no train timetables within about 280 km of ${end}.`;
+          const km = Math.round((h.distance ?? 0) / 1000);
+          return `The nearest station${h.reachable ? " with a train connection" : ""} to ${end} is ${h.station.name.replace(/\.$/, "")}, ${km} km away.`;
+        })
+        .join(" ");
+      const walking = await walkingP;
+      let trains = r.stitched?.length ? sortJourneys(dedupe(r.stitched), options.arriveBy) : [];
+      // Trains that are far slower than just walking are noise, not options.
+      // ...and so are trips that make you walk nearly as far as walking it all.
+      if (walking)
+        trains = trains.filter((j) => j.duration <= walking.duration * 1.5 && j.walkDistance < walking.walkDistance * 0.8);
+      if (trains.length) {
+        const longest = Math.max(0, ...trains[0].legs.filter((l) => l.mode === "WALK").map((l) => l.duration));
+        if (r.hints?.length && longest > attempt.walk * 60)
+          warnings.push(`No station is within walking reach, so these trips include a long walk (up to ${formatDuration(longest)}).${why ? ` ${why}` : ""}`);
+        else warnings.push("No single timetable search covers this trip, so it was put together from several searches.");
+        journeys = trains;
+        const est = trains[0].legs.find((l) => l.estimated);
+        if (est)
+          warnings.push(
+            `The train from ${est.from.name} to ${est.to.name} runs on a line whose schedule isn't in the open data, so that leg's time is an estimate (about ${formatDistance(est.distance ?? 0)} at ~65 km/h).`,
+          );
+        if (walking && walking.duration < trains[0].duration) {
+          journeys = [walking, ...trains];
+          warnings.push(`Walking the whole way (${formatDistance(walking.walkDistance)}) is faster than any train here.`);
+        }
+      } else if (walking) {
+        journeys = [walking];
         warnings.push(
-          `The train from ${est.from.name} to ${est.to.name} runs on a line whose schedule isn't in the open data, so that leg's time is an estimate (about ${formatDistance(est.distance ?? 0)} at ~65 km/h).`,
+          `No train helps on this trip, so the route is to walk the whole way: ${formatDistance(walking.walkDistance)}, about ${formatDuration(walking.duration)}.${why ? ` ${why}` : ""}`,
         );
-      if (walking && walking.duration < trains[0].duration) {
-        journeys = [walking, ...trains];
-        warnings.push(`Walking the whole way (${formatDistance(walking.walkDistance)}) is faster than any train here.`);
-      }
-    } else if (walking) {
-      journeys = [walking];
-      warnings.push(`No train helps on this trip, so the route is to walk the whole way: ${formatDistance(walking.walkDistance)}, about ${formatDuration(walking.duration)}. ${why}`);
-    } else stationHints = r.hints;
+      } else stationHints = r.hints;
+    }
+    // Straight-line walk estimates (no street route found) may cross water.
+    if (journeys.some((j) => j.legs.some((l) => l.mode === "WALK" && l.geometry.length === 2 && (l.distance ?? 0) > 20_000)))
+      warnings.push(
+        "Long walks drawn as straight lines have no street route in the map data: their length is an estimate, and they may cross water or impassable terrain.",
+      );
+  }
+
+  // Walking can beat every train on short trips: offer it first.
+  if (hadTimetableResults && !input.cursor && result.directWalk && result.directWalk.duration > 0) {
+    const fastest = Math.min(...journeys.map((j) => j.duration));
+    if (result.directWalk.duration < fastest && remaining() > 3000) {
+      const w = await walkingJourney(input, remaining).catch(() => null);
+      if (w) journeys = [w, ...journeys];
+    }
   }
 
   if (!journeys.length) {
@@ -378,7 +410,7 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
       );
   }
 
-  if (!input.cursor && result.directWalk && result.directWalk.duration > 0) {
+  if (!input.cursor && result.directWalk && result.directWalk.duration > 0 && !journeys.some((j) => j.legs.every((l) => l.mode === "WALK"))) {
     const fastest = Math.min(...journeys.map((j) => j.duration), Infinity);
     if (result.directWalk.duration <= 20 * 60 || result.directWalk.duration < fastest)
       warnings.push(`Walking the whole way takes about ${formatDuration(result.directWalk.duration)}.`);
@@ -440,7 +472,11 @@ async function explainNoRoute(
     if (!list.length) return void hints.push({ which, station: null });
     const n = list[0];
     const walkMinutes = walkMinutesFor(n.distance);
-    if (walkMinutes > walk) {
+    if (walkMinutes <= walk) {
+      // Within walking reach, but the search still failed: street routing
+      // may be missing there (e.g. China). Also try those stations directly.
+      cands[which] = [null, ...list.slice(0, 2)];
+    } else {
       hints.push({ which, station: n.place, distance: n.distance, walkMinutes });
       // Two nearest plus the nearest mainline station (nearbyRailStations puts it last if needed).
       const top = list.slice(0, 2);
@@ -450,6 +486,9 @@ async function explainNoRoute(
     }
   });
   const allHaveStations = hints.every((h) => h.station);
+  // Stations near a non-stranded end only matter when no end is stranded
+  // (search failed although both ends are near stations, e.g. no street data).
+  if (hints.length) for (const w of ["from", "to"] as const) if (!hints.some((h) => h.which === w)) cands[w] = [null];
 
   // Pairs ordered by total walking distance; at most 5 upstream checks.
   const pairs = cands.from
@@ -485,7 +524,7 @@ async function explainNoRoute(
     return chained ? [chained] : [];
   };
 
-  for (const [a, b] of hints.length && allHaveStations ? pairs : []) {
+  for (const [a, b] of allHaveStations ? pairs.filter(([x, y]) => x || y) : []) {
     if (remaining() < 4000) break;
     let rail: Journey[] = [];
     try {
@@ -590,7 +629,11 @@ async function chainRail(
     if (!left) continue;
     const right = await chainRail(input, h.place, b, left.endTime, depth + 1, walk, remaining, note);
     if (!right) continue;
-    return stitchJourney([...left.legs, ...right.legs], `${left.id}+${right.id}`, left.transfers + right.transfers + 1);
+    return stitchJourney(
+      [...relabel(left.legs, a.name, h.place.name), ...relabel(right.legs, h.place.name, b.name)],
+      `${left.id}+${right.id}`,
+      left.transfers + right.transfers + 1,
+    );
   }
   return null;
 }
@@ -682,7 +725,7 @@ async function relay(
         return onward.map((j) => {
           const lead = reuse ? legs.map((l) => shiftLeg(l, new Date(j.startTime).getTime() - new Date(t).getTime())) : legs;
           const tail = tailTo ? shiftLeg(tailTo, new Date(j.endTime).getTime() - new Date(tailTo.startTime).getTime()) : null;
-          return stitchJourney([...lead, ...j.legs, ...(tail ? [tail] : [])], `${j.id}-r`, j.transfers + 1);
+          return stitchJourney([...lead, ...relabel(j.legs, hub.place.name, other?.place.name), ...(tail ? [tail] : [])], `${j.id}-r`, j.transfers + 1);
         });
       }
       // side === "to": real trains to the hub, then (estimated train) → walk.
@@ -693,7 +736,7 @@ async function relay(
       for (const j of onward) {
         const legs: Leg[] = [];
         if (lead) legs.push(shiftLeg(lead, new Date(j.startTime).getTime() - new Date(lead.endTime).getTime()));
-        legs.push(...j.legs);
+        legs.push(...relabel(j.legs, other?.place.name, hub.place.name));
         let t = j.endTime;
         const lastStop = viaLocal ? local!.place : hub.place;
         if (viaLocal) {
@@ -834,4 +877,14 @@ export function zonedToUtc(local: string, tz: string): string {
   let utc = guess - offset(guess);
   utc = guess - offset(utc); // second pass handles DST edges
   return new Date(utc).toISOString();
+}
+
+/** Name the endpoints of a searched segment: providers call them "Start"/"Destination". */
+function relabel(legs: Leg[], startName?: string, endName?: string): Leg[] {
+  return legs.map((l, i) => {
+    let x = l;
+    if (i === 0 && startName && l.from.name === "Start") x = { ...x, from: { ...x.from, name: startName } };
+    if (i === legs.length - 1 && endName && l.to.name === "Destination") x = { ...x, to: { ...x.to, name: endName } };
+    return x;
+  });
 }
