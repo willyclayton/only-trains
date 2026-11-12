@@ -531,7 +531,7 @@ async function relay(
 ): Promise<Journey[]> {
   const { from, to, options } = input;
   const end = side === "from" ? from : to;
-  const hubs = await serviceHubs(end, Math.min(8000, remaining() - 1000));
+  const hubs = await serviceHubs(end, Math.min(8000, remaining() - 1000), 6);
   note(`relay ${side}: hubs ${hubs.map((h) => `${h.place.name} ${Math.round(h.distance / 1000)}km`).join(", ") || "none"}`);
   if (!hubs.length) return [];
   const local = (nearby[side === "from" ? 0 : 1] ?? [])[0] ?? null; // nearest rail station, served or not
@@ -542,12 +542,13 @@ async function relay(
   const depart = options.time && !options.arriveBy ? options.time : new Date().toISOString();
 
   let checks = 0;
-  for (const hub of hubs.slice(0, 3)) {
+  let best: Journey[] = [];
+  const tryHub = async (hub: NearestStation): Promise<Journey[]> => {
     for (const other of others) {
-      if (checks++ >= 5 || remaining() < 6000) return [];
+      if (checks++ >= 8 || remaining() < 6000) return [];
       const [a, b] = side === "from" ? [hub, other] : [other, hub];
       const rail = await railFor(a, b, options.time).catch(() => [] as Journey[]);
-      note(`relay check ${a?.place.name ?? "start"} (${a ? `${a.place.lat},${a.place.lon}` : ""}) → ${b?.place.name ?? "end"}: ${rail.length} ${rail.slice(0, 1).map((j) => `${j.startTime} ${Math.round(j.duration / 3600)}h ${j.legs.map((l) => l.line?.name ?? "walk").join(">")}`).join("")}`);
+      note(`relay check ${a?.place.name ?? "start"} → ${b?.place.name ?? "end"}: ${rail.length}`);
       if (!rail.length) continue;
 
       const viaLocal = local && local.place.name !== hub.place.name && haversine(local.place, hub.place) > 20_000;
@@ -599,8 +600,17 @@ async function relay(
       }
       return out;
     }
+    return [];
+  };
+  // Try every hub (nearest first) and keep the fastest overall trip: the
+  // nearest hub is not always best (Boise → Seattle via Wishram vs Elko).
+  for (const hub of hubs) {
+    if (remaining() < 6000) break;
+    const got = await tryHub(hub);
+    const fastest = (js: Journey[]) => Math.min(...js.map((j) => j.duration));
+    if (got.length && (!best.length || fastest(got) < fastest(best))) best = got;
   }
-  return [];
+  return best.sort((x, y) => x.duration - y.duration);
 }
 
 /** Add long walks between stranded endpoints and their stations to rail journeys. */

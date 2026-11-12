@@ -46,19 +46,50 @@ function allowedMotisModes(modes: RailMode[]): Set<string> {
 
 async function stopsInBox(p: LatLon, halfDeg: number, timeoutMs: number): Promise<MStop[]> {
   const halfLon = Math.min(180, halfDeg / Math.max(0.2, Math.cos((p.lat * Math.PI) / 180)));
-  const min = `${(p.lat - halfDeg).toFixed(5)},${(p.lon - halfLon).toFixed(5)}`;
-  const max = `${(p.lat + halfDeg).toFixed(5)},${(p.lon + halfLon).toFixed(5)}`;
+  return stopsInBounds(p.lat - halfDeg, p.lon - halfLon, p.lat + halfDeg, p.lon + halfLon, timeoutMs, 0);
+}
+
+/**
+ * Stops inside a lat/lon box. Transitous refuses boxes holding too many stops
+ * ({"error":"too many stops"}, e.g. a box around Boise reaching Portland and
+ * Salt Lake City), so split those into quarters, up to 3 levels deep.
+ */
+async function stopsInBounds(
+  minLat: number,
+  minLon: number,
+  maxLat: number,
+  maxLon: number,
+  timeoutMs: number,
+  depth: number,
+): Promise<MStop[]> {
+  const min = `${minLat.toFixed(5)},${minLon.toFixed(5)}`;
+  const max = `${maxLat.toFixed(5)},${maxLon.toFixed(5)}`;
   const url = `${TRANSITOUS_BASE}/api/v1/map/stops?min=${min}&max=${max}`;
-  return cached(`stops:${url}`, 10 * 60_000, async () => {
+  const got = await cached(`stops:${url}`, 10 * 60_000, async () => {
     const res = await fetchWithTimeout(url, {
       timeoutMs,
       provider: "Transitous",
       headers: { "User-Agent": userAgent(), Accept: "application/json" },
     });
-    if (!res.ok) throw new Error(`Transitous stops ${res.status}`);
-    const json = (await res.json()) as unknown;
-    return Array.isArray(json) ? (json as MStop[]) : [];
+    const json = (await res.json().catch(() => null)) as unknown;
+    if (Array.isArray(json)) return json as MStop[];
+    if (json && typeof json === "object" && /too many/i.test(String((json as { error?: unknown }).error))) return "split" as const;
+    throw new Error(`Transitous stops ${res.status}`);
   });
+  if (got !== "split") return got;
+  if (depth >= 3) return [];
+  const midLat = (minLat + maxLat) / 2;
+  const midLon = (minLon + maxLon) / 2;
+  const out: MStop[] = [];
+  for (const [a, b, c, d] of [
+    [minLat, minLon, midLat, midLon],
+    [minLat, midLon, midLat, maxLon],
+    [midLat, minLon, maxLat, midLon],
+    [midLat, midLon, maxLat, maxLon],
+  ]) {
+    out.push(...(await stopsInBounds(a, b, c, d, timeoutMs, depth + 1)));
+  }
+  return out;
 }
 
 /** Urban modes; everything else counts as mainline rail. */
@@ -163,11 +194,15 @@ export async function serviceHubs(p: LatLon, timeoutMs = 8000, max = 4): Promise
           place: { id: `stop:${s.stopId ?? `${s.lat},${s.lon}`}`, name, lat: s.lat, lon: s.lon, kind: "station" },
         });
       }
-      const all = [...byName.values()].sort((a, b) => b.imp - a.imp);
+      const all = [...byName.values()];
       if (all.length >= 2 || half === 5) {
-        return all
-          .slice(0, max)
+        // The nearest served stations (Elko, NV for Boise) plus the two busiest
+        // hubs (Portland, Seattle), nearest first.
+        const nearest = [...all].sort((a, b) => a.distance - b.distance).slice(0, Math.max(1, max - 2));
+        const busiest = [...all].sort((a, b) => b.imp - a.imp).slice(0, 2);
+        return [...new Set([...nearest, ...busiest])]
           .sort((a, b) => a.distance - b.distance)
+          .slice(0, max)
           .map(({ place, distance }) => ({ place, distance }));
       }
     }
