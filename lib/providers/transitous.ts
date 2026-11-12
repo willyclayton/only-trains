@@ -150,6 +150,7 @@ export function buildTransitousUrl(q: ProviderQuery): string {
   // Walk-only direct connections (first page only) let us tell the user when walking is quicker.
   p.set("directModes", "WALK");
   if (q.cursor) p.set("pageCursor", q.cursor);
+  if (q.searchWindowSec) p.set("searchWindow", String(q.searchWindowSec));
   // Direct (walk-only) results are informational; cap at 45 min of walking.
   p.set("maxDirectTime", String(Math.min(45 * 60, TRANSITOUS_MAX_DIRECT_SECONDS)));
   p.set("timetableView", "true");

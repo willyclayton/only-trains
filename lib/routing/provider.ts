@@ -11,6 +11,8 @@ export type ProviderQuery = {
   /** BCP-47 / ISO-639-1 language for names, e.g. "en". */
   language?: string;
   timeoutMs: number;
+  /** Look this many seconds past `time` for departures (rare long-distance trains). */
+  searchWindowSec?: number;
 };
 
 export type ProviderResult = {

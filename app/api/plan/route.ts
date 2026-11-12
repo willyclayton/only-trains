@@ -20,7 +20,7 @@ import type { ApiError } from "@/lib/types";
 import { parsePlanParams, plan, PlanError } from "@/lib/plan";
 
 /** Seconds. Worst case is ~3 upstream calls with a 24 s overall budget; within Vercel Hobby limits. */
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function languageFrom(req: NextRequest): string {
   const al = req.headers.get("accept-language") || "";

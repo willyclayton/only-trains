@@ -16,7 +16,7 @@ import type { ProviderQuery, ProviderResult } from "./routing/provider";
 import { planTransitous, TRANSITOUS_ATTRIBUTION, TRANSITOUS_MAX_PREPOST_SECONDS, walkLeg } from "./providers/transitous";
 import { journeyTotals } from "./journey";
 import { googleEnabled, planGoogle } from "./providers/google";
-import { nearbyRailStations, walkMinutesFor, type NearestStation } from "./routing/nearest";
+import { nearbyRailStations, serviceHubs, walkMinutesFor, type NearestStation } from "./routing/nearest";
 
 export { PlanError } from "./routing/http";
 
@@ -37,8 +37,8 @@ type Nearby = (NearestStation[] | undefined)[];
 /** Walking limits tried, in minutes, when nothing is found within the requested one. */
 const ESCALATION_STEPS = [30, 60];
 const MAX_WALK_MINUTES = Math.min(120, TRANSITOUS_MAX_PREPOST_SECONDS / 60);
-/** Overall budget for one /api/plan call (Vercel maxDuration is 30 s). */
-const TOTAL_BUDGET_MS = 24_000;
+/** Overall budget for one /api/plan call (Vercel maxDuration is 60 s). */
+const TOTAL_BUDGET_MS = 50_000;
 const PER_CALL_TIMEOUT_MS = 12_000;
 
 const FORBIDDEN_RAW = /^(BUS|COACH|FERRY|AIRPLANE|AERIAL_LIFT|AREAL_LIFT|CABLE_CAR|GONDOLA_LIFT|TROLLEYBUS|INTERCITY_BUS|SHARE_TAXI|ODM|RIDE_SHARING|FLEX|TAXI|CAR|BIKE|RENTAL)$/i;
@@ -319,6 +319,11 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
       const longest = Math.max(...trains[0].legs.filter((l) => l.mode === "WALK").map((l) => l.duration));
       warnings.push(`No station is within walking reach, so these trips include a long walk (up to ${formatDuration(longest)}). ${why}`);
       journeys = trains;
+      const est = trains[0].legs.find((l) => l.estimated);
+      if (est)
+        warnings.push(
+          `The train from ${est.from.name} to ${est.to.name} runs on a line whose schedule isn't in the open data, so that leg's time is an estimate (about ${formatDistance(est.distance ?? 0)} at ~65 km/h).`,
+        );
       if (walking && walking.duration < trains[0].duration) {
         journeys = [walking, ...trains];
         warnings.push(`Walking the whole way (${formatDistance(walking.walkDistance)}) is faster than any train here.`);
@@ -415,7 +420,7 @@ async function explainNoRoute(
       cands[which] = top;
     }
   });
-  if (!hints.length || hints.some((h) => !h.station)) return { hints: hints.length ? hints : undefined };
+  const allHaveStations = hints.every((h) => h.station);
 
   // Pairs ordered by total walking distance; at most 5 upstream checks.
   const pairs = cands.from
@@ -431,12 +436,14 @@ async function explainNoRoute(
           options: { ...options, time, arriveBy: time ? false : options.arriveBy, maxWalkMinutes: walk },
           language: input.language,
           timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
+          // Remote lines may run a few times a week: look 3 days ahead.
+          searchWindowSec: 3 * 86400,
         })
       ).journeys,
       options.modes,
     ).kept;
 
-  for (const [a, b] of pairs) {
+  for (const [a, b] of hints.length && allHaveStations ? pairs : []) {
     if (remaining() < 4000) break;
     let rail: Journey[] = [];
     try {
@@ -467,8 +474,133 @@ async function explainNoRoute(
     }
     return { hints };
   }
+  // Still nothing: the nearby stations may have no published schedule (e.g.
+  // VIA Rail's Canadian is missing from the open data). Relay through a busy
+  // hub further out, bridging to it with an estimated train on the line.
+  for (const side of ["from", "to"] as const) {
+    if (remaining() < 8000) break;
+    try {
+      const relayed = await relay(input, side, nearby, cands, walk, remaining, note, railFor);
+      if (relayed.length) return { hints: hints.length ? hints : undefined, stitched: relayed };
+    } catch (e) {
+      note(`relay ${side} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   for (const h of hints) if (h.reachable === undefined) h.reachable = false;
-  return { hints };
+  return { hints: hints.length ? hints : undefined };
+}
+
+/** Rail distance ≈ 1.35 × straight line; long-distance trains average ~65 km/h with stops. */
+function estimatedTrainLeg(a: Place, b: Place, departAt: string): Leg {
+  const distance = Math.round(haversine(a, b) * 1.35);
+  const duration = Math.round(distance / (65_000 / 3600));
+  const start = new Date(departAt).getTime();
+  const end = new Date(start + duration * 1000).toISOString();
+  return {
+    mode: "INTERCITY",
+    rawMode: "ESTIMATED",
+    estimated: true,
+    from: { name: a.name, lat: a.lat, lon: a.lon, departure: departAt },
+    to: { name: b.name, lat: b.lat, lon: b.lon, arrival: end },
+    startTime: departAt,
+    endTime: end,
+    duration,
+    distance,
+    geometry: [
+      [a.lon, a.lat],
+      [b.lon, b.lat],
+    ],
+    line: { name: "Train (no timetable)" },
+  };
+}
+
+/**
+ * Reach the stranded `side` through a hub with real service: e.g. Canim Lake,
+ * BC → walk to Clearwater (VIA, no schedule in the data) → estimated train to
+ * Vancouver → real Amtrak trains onward. Mirrored for a stranded destination.
+ */
+async function relay(
+  input: PlanInput,
+  side: "from" | "to",
+  nearby: Nearby,
+  cands: Record<"from" | "to", (NearestStation | null)[]>,
+  walk: number,
+  remaining: () => number,
+  note: (m: string) => void,
+  railFor: (a: NearestStation | null, b: NearestStation | null, time: string | null) => Promise<Journey[]>,
+): Promise<Journey[]> {
+  const { from, to, options } = input;
+  const end = side === "from" ? from : to;
+  const hubs = await serviceHubs(end, Math.min(8000, remaining() - 1000));
+  note(`relay ${side}: hubs ${hubs.map((h) => `${h.place.name} ${Math.round(h.distance / 1000)}km`).join(", ") || "none"}`);
+  if (!hubs.length) return [];
+  const local = (nearby[side === "from" ? 0 : 1] ?? [])[0] ?? null; // nearest rail station, served or not
+  const pool = side === "from" ? cands.to : cands.from;
+  // Prefer the mainline candidate (kept last by explainNoRoute), then the nearest.
+  const others = pool.length > 2 ? [pool[pool.length - 1], pool[0]] : pool.slice(0, 2);
+  const timeoutMs = () => Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500));
+  const depart = options.time && !options.arriveBy ? options.time : new Date().toISOString();
+
+  let checks = 0;
+  for (const hub of hubs.slice(0, 3)) {
+    for (const other of others) {
+      if (checks++ >= 5 || remaining() < 6000) return [];
+      const [a, b] = side === "from" ? [hub, other] : [other, hub];
+      const rail = await railFor(a, b, options.time).catch(() => [] as Journey[]);
+      note(`relay check ${a?.place.name ?? "start"} (${a ? `${a.place.lat},${a.place.lon}` : ""}) → ${b?.place.name ?? "end"}: ${rail.length} ${rail.slice(0, 1).map((j) => `${j.startTime} ${Math.round(j.duration / 3600)}h ${j.legs.map((l) => l.line?.name ?? "walk").join(">")}`).join("")}`);
+      if (!rail.length) continue;
+
+      const viaLocal = local && local.place.name !== hub.place.name && haversine(local.place, hub.place) > 20_000;
+      const endPt = { ...end, name: side === "from" ? "Start" : "Destination" };
+      if (side === "from") {
+        // Walk → (estimated train) → hub, then the first real trains after arrival.
+        const legs: Leg[] = [];
+        let t = depart;
+        const firstStop = viaLocal ? local!.place : hub.place;
+        const w = await walkLeg(endPt, { ...firstStop }, t, timeoutMs());
+        legs.push(w);
+        t = w.endTime;
+        if (viaLocal) {
+          const est = estimatedTrainLeg(local!.place, hub.place, t);
+          legs.push(est);
+          t = est.endTime;
+        }
+        let onward = (await railFor(hub, other, t).catch(() => [] as Journey[])).slice(0, 3);
+        note(`relay onward from ${hub.place.name} after ${t}: ${onward.length}`);
+        // Rare trains: no later run in the data yet. Use the run we found and
+        // time the approach to arrive just before it (durations still hold).
+        const reuse = !onward.length;
+        if (reuse) onward = rail.slice(0, 3);
+        const tailTo = other ? await walkLeg({ ...other.place }, { ...to, name: "Destination" }, onward[0].endTime, timeoutMs()) : null;
+        return onward.map((j) => {
+          const lead = reuse ? legs.map((l) => shiftLeg(l, new Date(j.startTime).getTime() - new Date(t).getTime())) : legs;
+          const tail = tailTo ? shiftLeg(tailTo, new Date(j.endTime).getTime() - new Date(tailTo.startTime).getTime()) : null;
+          return stitchJourney([...lead, ...j.legs, ...(tail ? [tail] : [])], `${j.id}-r`, j.transfers + 1);
+        });
+      }
+      // side === "to": real trains to the hub, then (estimated train) → walk.
+      const lead = other ? await walkLeg({ ...from, name: "Start" }, { ...other.place }, depart, timeoutMs()) : null;
+      let onward = (await railFor(other, hub, lead ? lead.endTime : options.time).catch(() => [] as Journey[])).slice(0, 3);
+      if (!onward.length) onward = rail.slice(0, 3); // rare trains: reuse the run we found
+      const out: Journey[] = [];
+      for (const j of onward) {
+        const legs: Leg[] = [];
+        if (lead) legs.push(shiftLeg(lead, new Date(j.startTime).getTime() - new Date(lead.endTime).getTime()));
+        legs.push(...j.legs);
+        let t = j.endTime;
+        const lastStop = viaLocal ? local!.place : hub.place;
+        if (viaLocal) {
+          const est = estimatedTrainLeg(hub.place, local!.place, t);
+          legs.push(est);
+          t = est.endTime;
+        }
+        legs.push(await walkLeg({ ...lastStop }, endPt, t, timeoutMs()));
+        out.push(stitchJourney(legs, `${j.id}-r`, j.transfers + 1));
+      }
+      return out;
+    }
+  }
+  return [];
 }
 
 /** Add long walks between stranded endpoints and their stations to rail journeys. */

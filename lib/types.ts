@@ -95,6 +95,11 @@ export type Leg = {
   intermediateStops?: StopTime[];
   realTime?: boolean;
   cancelled?: boolean;
+  /**
+   * The line exists in the data but has no published schedule, so this leg's
+   * time is an estimate (track distance ~1.35x straight line at ~65 km/h).
+   */
+  estimated?: boolean;
   /** Walk legs only. */
   steps?: WalkStep[];
   alerts?: { header?: string; description?: string; url?: string }[];

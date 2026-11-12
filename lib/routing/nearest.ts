@@ -19,6 +19,7 @@ type MStop = {
   lon: number;
   tz?: string;
   modes?: string[];
+  importance?: number;
 };
 
 export type NearestStation = {
@@ -136,4 +137,42 @@ function tidyStationName(name: string): string {
   const n = name.trim();
   if (n !== n.toUpperCase() || !/[A-Z]/.test(n)) return n;
   return n.toLowerCase().replace(/(^|[\s\-/(])(\p{L})/gu, (_, sep: string, ch: string) => sep + ch.toUpperCase());
+}
+
+const MAINLINE = new Set(["LONG_DISTANCE", "HIGHSPEED_RAIL", "NIGHT_RAIL", "REGIONAL_RAIL", "REGIONAL_FAST_RAIL"]);
+
+/**
+ * Major mainline stations with real scheduled service (MOTIS importance > 0)
+ * within up to ~550 km of `p`: relay points for reaching regions whose own
+ * stations have no published timetable. Busiest first, then nearest. Never throws.
+ */
+export async function serviceHubs(p: LatLon, timeoutMs = 8000, max = 4): Promise<NearestStation[]> {
+  try {
+    for (const half of [1.2, 2.5, 5]) {
+      const stops = await stopsInBox(p, half, timeoutMs);
+      const byName = new Map<string, NearestStation & { imp: number }>();
+      for (const s of stops) {
+        if (!s.name || !(s.importance! > 0) || !(s.modes ?? []).some((m) => MAINLINE.has(m))) continue;
+        const name = tidyStationName(s.name);
+        const key = name.toLowerCase();
+        const prev = byName.get(key);
+        if (prev && prev.imp >= (s.importance ?? 0)) continue;
+        byName.set(key, {
+          imp: s.importance ?? 0,
+          distance: Math.round(haversine(p, s)),
+          place: { id: `stop:${s.stopId ?? `${s.lat},${s.lon}`}`, name, lat: s.lat, lon: s.lon, kind: "station" },
+        });
+      }
+      const all = [...byName.values()].sort((a, b) => b.imp - a.imp);
+      if (all.length >= 2 || half === 5) {
+        return all
+          .slice(0, max)
+          .sort((a, b) => a.distance - b.distance)
+          .map(({ place, distance }) => ({ place, distance }));
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return [];
 }

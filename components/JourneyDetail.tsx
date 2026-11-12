@@ -587,6 +587,12 @@ function RailLeg({
         <div className="pb-0.5 pt-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <LineChip line={line} mode={leg.mode} icon full />
+            {leg.estimated && (
+              <span className="text-[12px] leading-4 text-muted">
+                Estimated time: this line&rsquo;s schedule isn&rsquo;t in the open data (~
+                {formatDistance(leg.distance ?? 0)} of track at ~65 km/h).
+              </span>
+            )}
             {leg.headsign && (
               <span className="min-w-0 text-[13px] leading-5 text-ink-2">
                 <span className="text-muted">towards</span> {leg.headsign}
