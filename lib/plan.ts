@@ -427,7 +427,7 @@ async function explainNoRoute(
     .flatMap((a) => cands.to.map((b) => [a, b] as const))
     .sort((x, y) => (x[0]?.distance ?? 0) + (x[1]?.distance ?? 0) - ((y[0]?.distance ?? 0) + (y[1]?.distance ?? 0)))
     .slice(0, 6);
-  const railFor = async (a: NearestStation | null, b: NearestStation | null, time: string | null) =>
+  const rawRail = async (a: NearestStation | null, b: NearestStation | null, time: string | null) =>
     enforceRailOnly(
       (
         await planTransitous({
@@ -442,18 +442,31 @@ async function explainNoRoute(
       ).journeys,
       options.modes,
     ).kept;
+  // Very long trips (e.g. Ukraine → Portugal) can be too much for one search:
+  // fall back to chaining searches through busy hubs (limited per request).
+  let chainsLeft = 2;
+  const railFor = async (a: NearestStation | null, b: NearestStation | null, time: string | null): Promise<Journey[]> => {
+    const direct = await rawRail(a, b, time);
+    if (direct.length) return direct;
+    const pa = a?.place ?? { ...from, name: "Start" };
+    const pb = b?.place ?? { ...to, name: "Destination" };
+    if (chainsLeft <= 0 || haversine(pa, pb) < 500_000 || remaining() < 10_000) return [];
+    chainsLeft--;
+    const chained = await chainRail(input, pa, pb, time, 0, walk, remaining, note);
+    return chained ? [chained] : [];
+  };
 
   for (const [a, b] of hints.length && allHaveStations ? pairs : []) {
     if (remaining() < 4000) break;
     let rail: Journey[] = [];
     try {
-      rail = await railFor(a, b, options.time);
+      rail = await rawRail(a, b, options.time);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       note(`check ${a?.place.name ?? "start"} → ${b?.place.name ?? "end"} failed: ${msg}`);
       if (/rate-limit/i.test(msg) && remaining() > 5000) {
         await new Promise((r) => setTimeout(r, 1200));
-        rail = await railFor(a, b, options.time).catch(() => []);
+        rail = await rawRail(a, b, options.time).catch(() => []);
       }
     }
     note(`check ${a?.place.name ?? "start"} → ${b?.place.name ?? "end"}: ${rail.length}`);
@@ -474,13 +487,21 @@ async function explainNoRoute(
     }
     return { hints };
   }
+  // Both ends are near stations but one search found nothing (very long or
+  // cross-border trips): chain searches through hubs.
+  if (!hints.length && remaining() > 10_000) {
+    const chained = await railFor(null, null, options.time).catch(() => [] as Journey[]);
+    if (chained.length) return { stitched: chained };
+  }
+
   // Still nothing: the nearby stations may have no published schedule (e.g.
   // VIA Rail's Canadian is missing from the open data). Relay through a busy
   // hub further out, bridging to it with an estimated train on the line.
-  for (const side of ["from", "to"] as const) {
+  const sides = (["from", "to"] as const).filter((sd) => !hints.length || hints.some((h) => h.which === sd));
+  for (const side of sides) {
     if (remaining() < 8000) break;
     try {
-      const relayed = await relay(input, side, nearby, cands, walk, remaining, note, railFor);
+      const relayed = await relay(input, side, nearby, cands, walk, remaining, note, railFor, rawRail);
       if (relayed.length) return { hints: hints.length ? hints : undefined, stitched: relayed };
     } catch (e) {
       note(`relay ${side} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -488,6 +509,61 @@ async function explainNoRoute(
   }
   for (const h of hints) if (h.reachable === undefined) h.reachable = false;
   return { hints: hints.length ? hints : undefined };
+}
+
+/**
+ * Plan a long rail trip as a chain of searches through busy mainline hubs near
+ * the midpoint (recursively, up to 3 levels: ≤ 8 segments). Each segment
+ * departs after the previous one arrives. Returns one stitched journey.
+ */
+async function chainRail(
+  input: PlanInput,
+  a: LatLon & { name: string },
+  b: LatLon & { name: string },
+  time: string | null,
+  depth: number,
+  walk: number,
+  remaining: () => number,
+  note: (m: string) => void,
+): Promise<Journey | null> {
+  const { options } = input;
+  const seg = async (x: LatLon, y: LatLon, t: string | null) =>
+    enforceRailOnly(
+      (
+        await planTransitous({
+          from: x,
+          to: y,
+          options: { ...options, time: t, arriveBy: false, maxWalkMinutes: walk },
+          language: input.language,
+          timeoutMs: Math.max(3000, Math.min(PER_CALL_TIMEOUT_MS, remaining() - 500)),
+          searchWindowSec: 3 * 86400,
+        })
+      ).journeys,
+      options.modes,
+    ).kept;
+  const earliest = (js: Journey[]) => js.reduce((p, c) => (c.endTime < p.endTime ? c : p));
+
+  if (depth > 0) {
+    const direct = await seg(a, b, time).catch(() => [] as Journey[]);
+    note(`chain d${depth} ${a.name} → ${b.name}: ${direct.length}`);
+    if (direct.length) return earliest(direct);
+  }
+  if (depth >= 3 || haversine(a, b) < 300_000 || remaining() < 8000) return null;
+
+  const mid = { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 };
+  const hubs = (await serviceHubs(mid, Math.min(8000, remaining() - 1000), 3, "busy")).filter(
+    (h) => haversine(h.place, a) > 50_000 && haversine(h.place, b) > 50_000,
+  );
+  note(`chain d${depth} hubs near midpoint: ${hubs.map((h) => h.place.name).join(", ") || "none"}`);
+  for (const h of hubs.slice(0, 2)) {
+    if (remaining() < 8000) break;
+    const left = await chainRail(input, a, h.place, time, depth + 1, walk, remaining, note);
+    if (!left) continue;
+    const right = await chainRail(input, h.place, b, left.endTime, depth + 1, walk, remaining, note);
+    if (!right) continue;
+    return stitchJourney([...left.legs, ...right.legs], `${left.id}+${right.id}`, left.transfers + right.transfers + 1);
+  }
+  return null;
 }
 
 /** Rail distance ≈ 1.35 × straight line; long-distance trains average ~65 km/h with stops. */
@@ -528,6 +604,7 @@ async function relay(
   remaining: () => number,
   note: (m: string) => void,
   railFor: (a: NearestStation | null, b: NearestStation | null, time: string | null) => Promise<Journey[]>,
+  rawRail: (a: NearestStation | null, b: NearestStation | null, time: string | null) => Promise<Journey[]> = railFor,
 ): Promise<Journey[]> {
   const { from, to, options } = input;
   const end = side === "from" ? from : to;
@@ -543,11 +620,11 @@ async function relay(
 
   let checks = 0;
   let best: Journey[] = [];
-  const tryHub = async (hub: NearestStation): Promise<Journey[]> => {
+  const tryHub = async (hub: NearestStation, chain: boolean): Promise<Journey[]> => {
     for (const other of others) {
       if (checks++ >= 8 || remaining() < 6000) return [];
       const [a, b] = side === "from" ? [hub, other] : [other, hub];
-      const rail = await railFor(a, b, options.time).catch(() => [] as Journey[]);
+      const rail = await (chain ? railFor : rawRail)(a, b, options.time).catch(() => [] as Journey[]);
       note(`relay check ${a?.place.name ?? "start"} → ${b?.place.name ?? "end"}: ${rail.length}`);
       if (!rail.length) continue;
 
@@ -566,7 +643,7 @@ async function relay(
           legs.push(est);
           t = est.endTime;
         }
-        let onward = (await railFor(hub, other, t).catch(() => [] as Journey[])).slice(0, 3);
+        let onward = (await rawRail(hub, other, t).catch(() => [] as Journey[])).slice(0, 3);
         note(`relay onward from ${hub.place.name} after ${t}: ${onward.length}`);
         // Rare trains: no later run in the data yet. Use the run we found and
         // time the approach to arrive just before it (durations still hold).
@@ -581,7 +658,7 @@ async function relay(
       }
       // side === "to": real trains to the hub, then (estimated train) → walk.
       const lead = other ? await walkLeg({ ...from, name: "Start" }, { ...other.place }, depart, timeoutMs()) : null;
-      let onward = (await railFor(other, hub, lead ? lead.endTime : options.time).catch(() => [] as Journey[])).slice(0, 3);
+      let onward = (await rawRail(other, hub, lead ? lead.endTime : options.time).catch(() => [] as Journey[])).slice(0, 3);
       if (!onward.length) onward = rail.slice(0, 3); // rare trains: reuse the run we found
       const out: Journey[] = [];
       for (const j of onward) {
@@ -604,11 +681,25 @@ async function relay(
   };
   // Try every hub (nearest first) and keep the fastest overall trip: the
   // nearest hub is not always best (Boise → Seattle via Wishram vs Elko).
+  const fastest = (js: Journey[]) => Math.min(...js.map((j) => j.duration));
   for (const hub of hubs) {
     if (remaining() < 6000) break;
-    const got = await tryHub(hub);
-    const fastest = (js: Journey[]) => Math.min(...js.map((j) => j.duration));
+    const got = await tryHub(hub, false);
     if (got.length && (!best.length || fastest(got) < fastest(best))) best = got;
+  }
+  if (!best.length && remaining() > 12_000) {
+    // Nearby stations can exist yet connect to nothing (suspended border
+    // lines): try the busiest hubs further out, e.g. Kyiv for Bryansk oblast.
+    const tried = new Set(hubs.map((h) => h.place.name));
+    const far = (await serviceHubs(end, Math.min(8000, remaining() - 1000), 4, "busy", 5)).filter((h) => !tried.has(h.place.name));
+    note(`relay ${side}: far hubs ${far.map((h) => `${h.place.name} ${Math.round(h.distance / 1000)}km`).join(", ") || "none"}`);
+    checks = Math.min(checks, 4);
+    for (const hub of far.sort((x, y) => x.distance - y.distance)) {
+      if (remaining() < 6000) break;
+      const got = await tryHub(hub, true);
+      if (got.length && (!best.length || fastest(got) < fastest(best))) best = got;
+      if (best.length) break;
+    }
   }
   return best.sort((x, y) => x.duration - y.duration);
 }

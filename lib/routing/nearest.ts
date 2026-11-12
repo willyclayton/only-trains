@@ -177,9 +177,15 @@ const MAINLINE = new Set(["LONG_DISTANCE", "HIGHSPEED_RAIL", "NIGHT_RAIL", "REGI
  * within up to ~550 km of `p`: relay points for reaching regions whose own
  * stations have no published timetable. Busiest first, then nearest. Never throws.
  */
-export async function serviceHubs(p: LatLon, timeoutMs = 8000, max = 4): Promise<NearestStation[]> {
+export async function serviceHubs(
+  p: LatLon,
+  timeoutMs = 8000,
+  max = 4,
+  prefer: "near" | "busy" = "near",
+  minHalf = 0,
+): Promise<NearestStation[]> {
   try {
-    for (const half of [1.2, 2.5, 5]) {
+    for (const half of [1.2, 2.5, 5].filter((h) => h >= minHalf)) {
       const stops = await stopsInBox(p, half, timeoutMs);
       const byName = new Map<string, NearestStation & { imp: number }>();
       for (const s of stops) {
@@ -198,6 +204,11 @@ export async function serviceHubs(p: LatLon, timeoutMs = 8000, max = 4): Promise
       if (all.length >= 2 || half === 5) {
         // The nearest served stations (Elko, NV for Boise) plus the two busiest
         // hubs (Portland, Seattle), nearest first.
+        if (prefer === "busy")
+          return [...all]
+            .sort((a, b) => b.imp - a.imp)
+            .slice(0, max)
+            .map(({ place, distance }) => ({ place, distance }));
         const nearest = [...all].sort((a, b) => a.distance - b.distance).slice(0, Math.max(1, max - 2));
         const busiest = [...all].sort((a, b) => b.imp - a.imp).slice(0, 2);
         return [...new Set([...nearest, ...busiest])]
