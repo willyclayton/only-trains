@@ -43,6 +43,9 @@ export type JourneyListProps = {
   onUseStation?: (which: "from" | "to", place: Place) => void;
   /** Straight-line distance between A and B, meters. */
   apart?: number;
+  onRetry?: () => void;
+  /** Fill A and B with an example trip. */
+  onExample?: (from: Place, to: Place) => void;
 };
 
 const GEOCODE_ATTRIBUTION = "Search: Transitous & Photon by komoot · © OpenStreetMap contributors";
@@ -74,6 +77,8 @@ export default function JourneyList({
   toName,
   onUseStation,
   apart,
+  onRetry,
+  onExample,
 }: JourneyListProps) {
   const now = useNow();
   const [paging, setPaging] = useState<"earlier" | "later" | null>(null);
@@ -84,7 +89,7 @@ export default function JourneyList({
   if (!ready) {
     return (
       <div className="px-4 pb-4 pt-4">
-        <EmptyState />
+        <EmptyState onExample={onExample} />
         <Footer attribution={attribution} />
       </div>
     );
@@ -100,7 +105,7 @@ export default function JourneyList({
           {warnings.map((w) => (
             <p
               key={w}
-              className="flex items-start gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-2 text-[12.5px] leading-snug text-ink-2"
+              className="flex items-start gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-2 text-[12.5px] leading-snug text-ink-2 [overflow-wrap:anywhere]"
             >
               <Info size={14} aria-hidden className="mt-[1px] shrink-0 text-muted" />
               <span>{w}</span>
@@ -116,9 +121,16 @@ export default function JourneyList({
             Couldn&rsquo;t plan this trip
           </p>
           <p className="mt-1 break-words pl-6 text-[12.5px] leading-snug text-muted">{error}</p>
-          <p className="mt-1.5 pl-6 text-[12.5px] leading-snug text-ink-2">
-            Try again in a moment, or nudge A or B closer to a station.
-          </p>
+          <p className="mt-1.5 pl-6 text-[12.5px] leading-snug text-ink-2">Try again in a moment.</p>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="ml-6 mt-2 inline-flex items-center rounded-full border border-ink px-3 py-1.5 text-[12.5px] font-medium text-ink hover:bg-panel-2"
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 
@@ -240,7 +252,7 @@ function JourneyCard({
     >
       {/* times + total */}
       <div className="flex items-baseline justify-between gap-3">
-        <p className="min-w-0 truncate text-[17px] font-semibold leading-6 tracking-[-0.01em] text-ink tabular">
+        <p className="min-w-0 pt-1 text-[17px] font-semibold leading-6 tracking-[-0.01em] text-ink tabular">
           {formatClock(j.startTime, tz)}
           <span className="mx-1 font-normal text-faint">–</span>
           {formatClock(j.endTime, tz)}
@@ -484,13 +496,25 @@ function NoResults({
   );
 }
 
-const EXAMPLES: [string, string, string][] = [
-  ["Wicker Park", "The Loop", "Chicago"],
-  ["Shibuya", "Asakusa", "Tokyo"],
-  ["Gare du Nord", "La Défense", "Paris"],
+const EXAMPLES: [Place, Place, string][] = [
+  [
+    { id: "ex-wp", name: "Wicker Park", lat: 41.9088, lon: -87.6776, kind: "city" },
+    { id: "ex-loop", name: "The Loop", lat: 41.8826, lon: -87.6233, kind: "city" },
+    "Chicago",
+  ],
+  [
+    { id: "ex-shibuya", name: "Shibuya", lat: 35.658, lon: 139.7016, kind: "station" },
+    { id: "ex-asakusa", name: "Asakusa", lat: 35.7148, lon: 139.7967, kind: "station" },
+    "Tokyo",
+  ],
+  [
+    { id: "ex-gdn", name: "Gare du Nord", lat: 48.8809, lon: 2.3553, kind: "station" },
+    { id: "ex-ld", name: "La Défense", lat: 48.8919, lon: 2.238, kind: "station" },
+    "Paris",
+  ],
 ];
 
-function EmptyState() {
+function EmptyState({ onExample }: { onExample?: (a: Place, b: Place) => void }) {
   return (
     <div className="px-0.5">
       <h2 className="text-[15px] font-semibold tracking-tight text-ink">Where to?</h2>
@@ -501,11 +525,17 @@ function EmptyState() {
       <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Try</p>
       <ul className="mt-1.5 divide-y divide-line rounded-xl border border-line">
         {EXAMPLES.map(([a, b, city]) => (
-          <li key={a} className="flex items-center gap-2 px-3 py-2.5 text-[13px] text-ink-2">
-            <span className="truncate font-medium text-ink">{a}</span>
-            <ChevronRight size={13} aria-hidden className="shrink-0 text-faint" />
-            <span className="truncate font-medium text-ink">{b}</span>
-            <span className="ml-auto shrink-0 text-[12px] text-muted">{city}</span>
+          <li key={a.id}>
+            <button
+              type="button"
+              onClick={() => onExample?.(a, b)}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink-2 hover:bg-panel-2"
+            >
+              <span className="truncate font-medium text-ink">{a.name}</span>
+              <ChevronRight size={13} aria-hidden className="shrink-0 text-faint" />
+              <span className="truncate font-medium text-ink">{b.name}</span>
+              <span className="ml-auto shrink-0 text-[12px] text-muted">{city}</span>
+            </button>
           </li>
         ))}
       </ul>

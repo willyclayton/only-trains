@@ -8,6 +8,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Layers } from "lucide-react";
 import type { IControl } from "maplibre-gl";
 import { RAIL_VIEWS, type RailPrefs } from "@/lib/map/config";
+import { markPanelClosedByTap } from "@/lib/map/guard";
 
 /** An empty control container MapView renders React into. */
 export class PortalControl implements IControl {
@@ -44,7 +45,12 @@ export default function RailLayersControl({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(e.target as Node)) {
+        setOpen((was) => {
+          if (was) markPanelClosedByTap();
+          return false;
+        });
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);

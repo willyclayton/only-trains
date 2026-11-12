@@ -12,6 +12,7 @@
  *  - Panel hover → global-state expression (no data reload).
  *  - Endpoints, line badges and popups are plain DOM positioned by MapLibre.
  */
+import { tapJustClosedPanel } from "@/lib/map/guard";
 import "./map/map.css";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -446,7 +447,7 @@ export default function MapView(props: MapViewProps) {
     };
 
     const onClick = (e: MapMouseEvent) => {
-      if (Date.now() - lastLongPress < 800) return;
+      if (Date.now() - lastLongPress < 800 || tapJustClosedPanel()) return;
       const target = e.originalEvent?.target as HTMLElement | null;
       if (target?.closest?.(".maplibregl-marker, .maplibregl-popup")) return;
       const touch = (e.originalEvent as PointerEvent).pointerType === "touch";

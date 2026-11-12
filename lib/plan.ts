@@ -423,8 +423,22 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
   const cursors = hadTimetableResults || input.cursor ? { earlier: wrap(result.cursors.earlier), later: wrap(result.cursors.later) } : undefined;
 
   const first = journeys[0];
-  const originTz = result.originTz ?? first?.legs.find((l) => l.from.tz)?.from.tz;
-  const destinationTz = result.destinationTz ?? [...(first?.legs ?? [])].reverse().find((l) => l.to.tz)?.to.tz;
+  let originTz = result.originTz ?? first?.legs.find((l) => l.from.tz)?.from.tz;
+  let destinationTz = result.destinationTz ?? [...(first?.legs ?? [])].reverse().find((l) => l.to.tz)?.to.tz;
+  // Walk-only and stitched trips may carry no stop time zones: look them up so
+  // times show in local time at each end, not the viewer's device time.
+  if (journeys.length && (!originTz || !destinationTz) && remaining() > 1500) {
+    [originTz, destinationTz] = await Promise.all([
+      originTz ?? timezoneAt(from, 1500).catch(() => undefined),
+      destinationTz ?? timezoneAt(to, 1500).catch(() => undefined),
+    ]);
+  }
+  for (const j of journeys)
+    j.legs = j.legs.map((l, i) => ({
+      ...l,
+      from: l.from.tz ? l.from : { ...l.from, tz: i === 0 ? originTz : (j.legs[i - 1]?.to.tz ?? originTz) },
+      to: l.to.tz ? l.to : { ...l.to, tz: i === j.legs.length - 1 ? destinationTz : (j.legs[i + 1]?.from.tz ?? destinationTz) },
+    }));
 
   return {
     journeys,

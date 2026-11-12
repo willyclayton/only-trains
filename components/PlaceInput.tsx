@@ -480,7 +480,7 @@ const PlaceInput = forwardRef<PlaceInputHandle, PlaceInputProps>(function PlaceI
             </p>
           )}
           {!showEmptyMenu && status === "done" && results.length === 0 && (
-            <p className="flex items-center gap-2 px-3 py-3 text-[13px] text-muted" role="status">
+            <p className="flex items-center gap-2 px-3 py-3 text-[13px] text-muted [overflow-wrap:anywhere]" role="status">
               <SearchX size={15} aria-hidden className="shrink-0" />
               No matches for “{query}”. Try a station or street name.
             </p>

@@ -20,7 +20,7 @@ const MapView = dynamic(() => import("./MapView"), {
 function parsePlace(v: string | null, name: string | null, id: string): Place | null {
   if (!v) return null;
   const [a, b] = v.split(",").map(Number);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180) return null;
   return { id, lat: a, lon: b, name: name || `${a.toFixed(5)}, ${b.toFixed(5)}`, kind: "coordinate" };
 }
 
@@ -34,7 +34,10 @@ function readUrlState(sp: URLSearchParams): { from: Place | null; to: Place | nu
     from: parsePlace(sp.get("from"), sp.get("fromName"), "url-from"),
     to: parsePlace(sp.get("to"), sp.get("toName"), "url-to"),
     options: {
-      time: sp.get("t") || null,
+      time: (() => {
+        const t = sp.get("t");
+        return t && Number.isFinite(Date.parse(t)) ? t : null;
+      })(),
       arriveBy: sp.get("arr") === "1",
       modes: modes.length ? modes : DEFAULT_MODES,
       maxWalkMinutes: Number.isFinite(walk) && walk > 0 ? walk : DEFAULT_MAX_WALK_MINUTES,
@@ -66,7 +69,7 @@ function writeUrlState(from: Place | null, to: Place | null, o: PlanOptions) {
 function useIsDesktop() {
   const [desktop, setDesktop] = useState(true);
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 768px)");
+    const mq = window.matchMedia("(min-width: 768px), (orientation: landscape) and (min-width: 560px) and (max-height: 520px)");
     const update = () => setDesktop(mq.matches);
     update();
     mq.addEventListener("change", update);
@@ -143,7 +146,13 @@ export default function Planner() {
       if (cursor) qs.set("cursor", cursor);
       try {
         const res = await fetch(`/api/plan?${qs}`, { signal: ac.signal });
-        const json = (await res.json()) as PlanResponse | ApiError;
+        const json = (await res.json().catch(() => ({
+          error:
+            res.status === 504 || res.status === 502
+              ? "The route search took too long"
+              : `The server answered with an error (${res.status})`,
+          detail: "Long or remote trips need a lot of searching. Please try again.",
+        }))) as PlanResponse | ApiError;
         if (!res.ok || "error" in json) {
           const e = json as ApiError;
           throw new Error(e.detail ? `${e.error}: ${e.detail}` : e.error || `Request failed (${res.status})`);
@@ -180,10 +189,14 @@ export default function Planner() {
     [from, to, options],
   );
 
-  // Re-plan whenever both endpoints or options change.
+  // Re-plan when the endpoints' coordinates or the options change (not when a
+  // dropped pin merely gets its name from the reverse geocoder).
+  const planKey = from && to ? `${from.lat},${from.lon}|${to.lat},${to.lon}|${JSON.stringify(options)}` : "";
+  const runPlanRef = useRef(runPlan);
+  runPlanRef.current = runPlan;
   useEffect(() => {
-    if (from && to) {
-      runPlan();
+    if (planKey) {
+      runPlanRef.current();
     } else {
       abortRef.current?.abort();
       setResult(null);
@@ -192,7 +205,7 @@ export default function Planner() {
       setLoading(false);
       setError(null);
     }
-  }, [from, to, options, runPlan]);
+  }, [planKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setPlace = useCallback((which: "from" | "to", place: Place | null) => {
     (which === "from" ? setFrom : setTo)(place);
@@ -253,8 +266,10 @@ export default function Planner() {
     setFocusNonce((n) => n + 1);
   }, []);
 
+  // Landscape phones get the side panel too, at up to half the screen.
+  const panelWidth = typeof window === "undefined" ? PANEL_WIDTH : Math.min(PANEL_WIDTH, Math.round(window.innerWidth * 0.52));
   const mapPadding = isDesktop
-    ? { top: 48, right: 48, bottom: 48, left: PANEL_WIDTH + 48 }
+    ? { top: 48, right: 48, bottom: 48, left: panelWidth + 48 }
     : { top: 32, right: 24, bottom: (sheetHeight || Math.round(window.innerHeight * 0.62)) + 16, left: 24 };
 
   const panelBody =
@@ -296,6 +311,11 @@ export default function Planner() {
           onEarlier={result?.cursors?.earlier ? () => runPlan(result.cursors!.earlier, "earlier") : undefined}
           onLater={result?.cursors?.later ? () => runPlan(result.cursors!.later, "later") : undefined}
           ready={!!from && !!to}
+          onRetry={() => runPlan()}
+          onExample={(a, b) => {
+            setFrom(a);
+            setTo(b);
+          }}
           stationHints={result?.stationHints}
           fromName={from?.name}
           toName={to?.name}
@@ -328,7 +348,7 @@ export default function Planner() {
       {isDesktop ? (
         <aside
           className="absolute left-3 top-3 bottom-3 z-10 flex flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-panel"
-          style={{ width: PANEL_WIDTH }}
+          style={{ width: panelWidth }}
         >
           <Header />
           <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 overflow-y-auto">{panelBody}</div>
