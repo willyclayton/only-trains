@@ -16,7 +16,7 @@ import type { ProviderQuery, ProviderResult } from "./routing/provider";
 import { planTransitous, TRANSITOUS_ATTRIBUTION, TRANSITOUS_MAX_PREPOST_SECONDS, walkLeg } from "./providers/transitous";
 import { journeyTotals } from "./journey";
 import { googleEnabled, planGoogle } from "./providers/google";
-import { nearbyRailStations, serviceHubs, walkMinutesFor, type NearestStation } from "./routing/nearest";
+import { nearbyRailStations, serviceHubs, timezoneAt, walkMinutesFor, type NearestStation } from "./routing/nearest";
 
 export { PlanError } from "./routing/http";
 
@@ -30,6 +30,8 @@ export type PlanInput = {
   language?: string;
   /** Include timing/error diagnostics in the response. */
   debug?: boolean;
+  /** Wall-clock departure/arrival at the start ("2026-11-13T08:00"), no offset. */
+  localTime?: string;
 };
 
 type Nearby = (NearestStation[] | undefined)[];
@@ -52,7 +54,7 @@ export function parseLatLon(v: string | null | undefined, label: string): LatLon
   const parts = v.split(",").map((s) => s.trim());
   const lat = Number(parts[0]);
   const lon = Number(parts[1]);
-  if (parts.length < 2 || !Number.isFinite(lat) || !Number.isFinite(lon) || parts[0] === "" || parts[1] === "")
+  if (parts.length !== 2 || !Number.isFinite(lat) || !Number.isFinite(lon) || parts[0] === "" || parts[1] === "")
     throw new PlanError(400, `Invalid ${label} coordinates`, `Expected "lat,lon", got "${v.slice(0, 60)}"`);
   if (lat < -90 || lat > 90 || lon < -180 || lon > 180)
     throw new PlanError(400, `Invalid ${label} coordinates`, "Latitude must be within ±90 and longitude within ±180.");
@@ -88,8 +90,13 @@ export function parsePlanParams(sp: URLSearchParams): PlanInput {
 
   let time: string | null = null;
   const rawTime = sp.get("time");
+  let localTime: string | undefined;
+  if (rawTime && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(rawTime)) {
+    // No offset: a wall-clock time at the start (resolved to UTC in plan()).
+    localTime = rawTime;
+  }
   if (rawTime) {
-    const t = Date.parse(rawTime);
+    const t = Date.parse(localTime ? `${localTime}Z` : rawTime);
     if (!Number.isFinite(t)) throw new PlanError(400, "Invalid time", "Use an ISO-8601 timestamp, e.g. 2026-11-12T08:30:00Z.");
     time = new Date(t).toISOString();
   }
@@ -98,7 +105,7 @@ export function parsePlanParams(sp: URLSearchParams): PlanInput {
 
   const cursor = sp.get("cursor") || undefined;
   const language = sp.get("lang") || undefined;
-  return { from, to, options: { time, arriveBy, modes, maxWalkMinutes }, cursor, language };
+  return { from, to, options: { time, arriveBy, modes, maxWalkMinutes }, cursor, language, localTime };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +187,10 @@ function maxWalkLegMinutes(journeys: Journey[]): number {
 type Attempt = { provider: "transitous" | "google"; walk: number; result: ProviderResult };
 
 export async function plan(input: PlanInput): Promise<PlanResponse> {
+  if (input.localTime) {
+    const tz = await timezoneAt(input.from).catch(() => undefined);
+    if (tz) input = { ...input, options: { ...input.options, time: zonedToUtc(input.localTime, tz) } };
+  }
   const { from, to, options } = input;
   if (!options.modes.length) throw new PlanError(400, "Pick at least one kind of train");
   const distance = haversine(from, to);
@@ -246,6 +257,22 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
         );
       } catch (e) {
         note(`plan walk=${w} failed: ${e instanceof Error ? e.message : String(e)}`);
+        // Transient upstream trouble (timeouts, 5xx, rate limits): retry once with more time.
+        if (i === 0 && e instanceof PlanError && e.status >= 500 && remaining() > 15_000) {
+          await new Promise((r) => setTimeout(r, 800));
+          try {
+            const result = await planTransitous({ ...query({ ...options, maxWalkMinutes: w }), timeoutMs: Math.min(20_000, remaining() - 2000) });
+            attempt = { provider: "transitous", walk: w, result };
+            note(`plan walk=${w} retry: ${result.journeys.length} journeys`);
+            if (result.journeys.length) break;
+            nearbyP ??= Promise.all(
+              [from, to].map((p) => nearbyRailStations(p, options.modes, 4, Math.min(6000, remaining() - 500))),
+            );
+            continue;
+          } catch (e2) {
+            note(`plan walk=${w} retry failed: ${e2 instanceof Error ? e2.message : String(e2)}`);
+          }
+        }
         if (i === 0) firstError = e;
         // A bad date won't improve with more walking, and a struggling provider
         // should not be hammered with escalations: stop at the first error.
@@ -271,8 +298,10 @@ export async function plan(input: PlanInput): Promise<PlanResponse> {
 
     if (!attempt) {
       if (firstError instanceof PlanError && firstError.status < 500) throw firstError;
-      // Trains can't be checked right now, but there is always a way: walk.
-      const walking = remaining() > 2000 ? await walkingJourney(input, remaining).catch(() => null) : null;
+      // Trains can't be checked right now. A short hop can still be walked; a
+      // long trip must not be answered with a fake multi-day walk.
+      const walking =
+        haversine(from, to) <= 5_000 && remaining() > 2000 ? await walkingJourney(input, remaining).catch(() => null) : null;
       if (!walking) {
         if (firstError instanceof PlanError) throw firstError;
         throw new PlanError(502, "Routing service unavailable", firstError instanceof Error ? firstError.message : undefined);
@@ -786,4 +815,23 @@ function shiftLeg(l: Leg, ms: number): Leg {
 function walkRaisedWarning(requested: number, used: number, longest?: number): string {
   const tail = longest && longest > requested ? ` The longest walk below is ${longest} min.` : "";
   return `No rail route within a ${requested}-min walk, so the walking limit was raised to ${used} min.${tail}`;
+}
+
+/** "2026-11-13T08:00" wall-clock in `tz` → UTC ISO string. */
+export function zonedToUtc(local: string, tz: string): string {
+  const [d, t] = local.split("T");
+  const [y, mo, da] = d.split("-").map(Number);
+  const [h, mi, se] = t.split(":").map(Number);
+  const guess = Date.UTC(y, mo - 1, da, h, mi, se || 0);
+  const offset = (at: number) => {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        .formatToParts(new Date(at))
+        .map((x) => [x.type, x.value]),
+    );
+    return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) - at;
+  };
+  let utc = guess - offset(guess);
+  utc = guess - offset(utc); // second pass handles DST edges
+  return new Date(utc).toISOString();
 }

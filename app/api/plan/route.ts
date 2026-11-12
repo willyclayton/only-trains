@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
     if (!input.language) input.language = languageFrom(req);
     input.debug = sp.get("debug") === "1";
     const body = await plan(input);
-    const cacheable = !!(input.options.time || input.cursor);
+    // Never let the CDN keep a degraded answer (timetables unavailable).
+    const degraded = body.warnings.some((w) => w.startsWith("Train timetables couldn't be checked"));
+    const cacheable = !!(input.options.time || input.cursor || input.localTime) && !degraded;
     return Response.json(body, {
       headers: {
         "Cache-Control": cacheable ? "public, max-age=0, s-maxage=30, stale-while-revalidate=120" : "private, no-store",

@@ -144,10 +144,10 @@ function roundedNow(): Date {
   return d;
 }
 
+/** Keep the wall-clock value; the server reads it in the start's time zone. */
 function fromLocalInput(v: string): string | null {
   if (!v) return null;
-  const d = new Date(v); // datetime-local is parsed as local time
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? v.slice(0, 16) : null;
 }
 
 function timeLabel(o: PlanOptions): string {
@@ -248,7 +248,7 @@ function TimeOption({ options, onOptionsChange }: { options: PlanOptions; onOpti
                 />
               </label>
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[11.5px] leading-snug text-muted">In your device&rsquo;s time zone.</p>
+                <p className="text-[11.5px] leading-snug text-muted">Local time at the start.</p>
                 <button
                   type="submit"
                   className="h-8 shrink-0 rounded-lg bg-ink px-3.5 text-[12.5px] font-semibold text-panel hover:opacity-90"

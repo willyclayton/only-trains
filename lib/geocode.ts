@@ -372,11 +372,12 @@ function textScore(name: string, q: string): number {
 function distanceScore(p: { lat: number; lon: number }, near?: { lat: number; lon: number } | null): number {
   if (!near) return 0;
   const km = haversine(p, near) / 1000;
-  if (km < 3) return 22;
-  if (km < 15) return 18;
-  if (km < 50) return 12;
-  if (km < 200) return 6;
-  if (km < 1000) return 2;
+  // Strong enough that "Hauptbahnhof" near Munich finds München Hbf first.
+  if (km < 3) return 50;
+  if (km < 15) return 42;
+  if (km < 50) return 30;
+  if (km < 200) return 14;
+  if (km < 1000) return 4;
   return 0;
 }
 

@@ -222,3 +222,13 @@ export async function serviceHubs(
   }
   return [];
 }
+
+/** IANA time zone at a point, from the nearest stops' timetable data. */
+export async function timezoneAt(p: LatLon, timeoutMs = 4000): Promise<string | undefined> {
+  for (const half of [0.05, 0.3, 1.2]) {
+    const stops = await stopsInBox(p, half, timeoutMs).catch(() => [] as MStop[]);
+    const tz = stops.find((s) => s.tz)?.tz;
+    if (tz) return tz;
+  }
+  return undefined;
+}
